@@ -3,9 +3,11 @@
   python main.py            -> interfaz grafica
   python main.py --sync     -> sincroniza y sale (lo que usa la tarea programada)
   python main.py --itunes   -> solo vuelca las playlists de TIDAL en iTunes
+  python main.py --flac2alac -> convierte a ALAC los FLAC de la carpeta de iTunes
   python main.py --itunes --playlist "Mi lista"  -> solo esa playlist
   python main.py --status   -> muestra el estado actual
   python main.py --schedule 03:00 / --unschedule
+  python main.py --schedule-flac 04:00 / --unschedule-flac
 """
 from __future__ import annotations
 
@@ -15,6 +17,7 @@ import sys
 
 from stsync import scheduler
 from stsync.config import Config
+from stsync.convert import ConvertError, FlacConverter
 from stsync.http import ApiError
 from stsync.oauth import OAuthError
 from stsync.paths import app_dir, log_file
@@ -92,6 +95,21 @@ def _data_dir_state() -> str:
     return f"correcta, {informes} informe{'s' if informes != 1 else ''}"
 
 
+def run_flac2alac() -> int:
+    log, handle = _file_logger()
+    try:
+        FlacConverter(Config.load(), log).run()
+        return 0
+    except ConvertError as exc:
+        log(f"ERROR: {exc}")
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        log(f"ERROR inesperado: {exc}")
+        return 2
+    finally:
+        handle.close()
+
+
 def show_status() -> int:
     cfg, tokens, state = Config.load(), TokenStore(), StateStore()
     names = state.data.get("names", {})
@@ -108,13 +126,19 @@ def show_status() -> int:
     itunes = ("si, prefijo '%s'" % cfg.get("itunes_playlist_prefix", "")
               if cfg.get("itunes_enabled") else "no")
     print(f"iTunes           : {itunes}")
+    flac = ("si, al terminar la sincronizacion"
+            if cfg.get("flac_after_sync") else "solo a mano o programado")
+    print(f"FLAC a ALAC      : {flac}")
     print(f"Borrados         : {'se propagan' if cfg.propagate_deletions else 'no se propagan'}")
     print(f"Simulacion       : {'SI' if cfg.dry_run else 'no'}")
     print(f"Ultima sync      : {state.last_sync or 'nunca'}")
     print(f"Ultimo iTunes    : {state.data.get('last_itunes_sync', 'nunca')}")
     print(f"Ultimo resumen   : {state.data.get('last_summary', '-')}")
-    print(f"Tarea programada : "
+    print(f"Tarea de sync    : "
           f"{scheduler.task_info() if scheduler.task_exists() else 'no registrada'}")
+    flac_task = scheduler.FLAC
+    print(f"Tarea de FLAC    : "
+          f"{scheduler.task_info(flac_task) if scheduler.task_exists(flac_task) else 'no registrada'}")
     return 0
 
 
@@ -129,12 +153,18 @@ def main(argv: list[str] | None = None) -> int:
                         help="vuelca las playlists de TIDAL en iTunes y sale")
     parser.add_argument("--playlist", metavar="NOMBRE",
                         help="con --itunes, sincroniza solo esa playlist de TIDAL")
+    parser.add_argument("--flac2alac", action="store_true",
+                        help="convierte a ALAC los FLAC de la carpeta de iTunes")
     parser.add_argument("--status", action="store_true",
                         help="muestra el estado y sale")
     parser.add_argument("--schedule", metavar="HH:MM",
                         help="registra la tarea diaria a esa hora")
     parser.add_argument("--unschedule", action="store_true",
                         help="elimina la tarea programada")
+    parser.add_argument("--schedule-flac", metavar="HH:MM",
+                        help="registra el repaso diario de FLAC a esa hora")
+    parser.add_argument("--unschedule-flac", action="store_true",
+                        help="elimina el repaso diario de FLAC")
     parser.add_argument("--dry-run", action="store_true",
                         help="fuerza el modo simulacion en esta ejecucion")
     args = parser.parse_args(argv)
@@ -154,6 +184,16 @@ def main(argv: list[str] | None = None) -> int:
         ok, msg = scheduler.delete_task()
         print(msg)
         return 0 if ok else 1
+    if args.schedule_flac:
+        ok, msg = scheduler.create_task(args.schedule_flac, scheduler.FLAC)
+        print(msg)
+        return 0 if ok else 1
+    if args.unschedule_flac:
+        ok, msg = scheduler.delete_task(scheduler.FLAC)
+        print(msg)
+        return 0 if ok else 1
+    if args.flac2alac:
+        return run_flac2alac()
     if args.itunes or args.playlist:
         return run_sync(itunes_only=True, playlist=args.playlist)
     if args.sync:

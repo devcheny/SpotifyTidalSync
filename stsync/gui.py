@@ -15,6 +15,8 @@ from urllib.parse import urlparse
 
 from . import scheduler
 from .config import Config
+from .convert import DONE_DIR, ConvertError, FlacConverter
+from .convert import diagnose as flac_diagnose
 from .http import ApiError
 from .itunes import diagnose as itunes_diagnose
 from .oauth import OAuthError
@@ -112,13 +114,16 @@ class App(tk.Tk):
         notebook.pack(fill="both", expand=True, padx=18, pady=(4, 6))
         self.tab_main = ttk.Frame(notebook, padding=14)
         self.tab_itunes = ttk.Frame(notebook, padding=14)
+        self.tab_flac = ttk.Frame(notebook, padding=14)
         self.tab_settings = ttk.Frame(notebook, padding=14)
         notebook.add(self.tab_main, text="Sincronizacion")
         notebook.add(self.tab_itunes, text="iTunes")
+        notebook.add(self.tab_flac, text="FLAC a ALAC")
         notebook.add(self.tab_settings, text="Ajustes")
 
         self._build_main_tab()
         self._build_itunes_tab()
+        self._build_flac_tab()
         self._build_settings_tab()
 
     def _build_main_tab(self) -> None:
@@ -430,6 +435,155 @@ class App(tk.Tk):
         self._set_itunes_playlists(sorted(every), checked=marked or set(names))
         self._append(f"{len(names)} playlists leidas de TIDAL.", "ok")
 
+    # -- pestana FLAC a ALAC -------------------------------------------------
+    def _build_flac_tab(self) -> None:
+        intro = ttk.Frame(self.tab_flac, style="Card.TFrame", padding=14)
+        intro.pack(fill="x")
+        ttk.Label(intro, text="Convertir FLAC a ALAC",
+                  style="Head.TLabel").pack(anchor="w")
+        ttk.Label(intro, text="iTunes no sabe leer FLAC: lo que dejas en la "
+                              "carpeta de auto-anadir acaba en su subcarpeta "
+                              "'No anadido'. Esto busca los FLAC ahi dentro, los "
+                              "convierte a ALAC y deja el .m4a en la raiz de la "
+                              "carpeta, que es donde iTunes si los recoge solo.",
+                  style="Muted.TLabel", wraplength=740,
+                  justify="left").pack(anchor="w", pady=(2, 10))
+        self.flac_status = tk.Label(intro, text="", bg=CARD, fg=MUTED,
+                                    wraplength=740, justify="left")
+        self.flac_status.pack(anchor="w")
+
+        paths = ttk.Frame(self.tab_flac, style="Card.TFrame", padding=14)
+        paths.pack(fill="x", pady=(12, 0))
+        paths.columnconfigure(1, weight=1)
+        for row, (key, label, browse) in enumerate((
+            ("flac_folder", "Carpeta", self._browse_flac_folder),
+            ("ffmpeg_path", "ffmpeg (opcional)", self._browse_ffmpeg),
+        )):
+            ttk.Label(paths, text=label, style="Card.TLabel").grid(
+                row=row, column=0, sticky="w", padx=(0, 10), pady=3)
+            var = tk.StringVar(value=str(self.cfg.get(key, "")))
+            self.vars[key] = var
+            ttk.Entry(paths, textvariable=var).grid(row=row, column=1,
+                                                    sticky="ew", pady=3)
+            ttk.Button(paths, text="Examinar...", width=13,
+                       command=browse).grid(row=row, column=2, padx=(8, 0))
+        ttk.Label(paths, text="Deja ffmpeg vacio si ya esta en el PATH.",
+                  style="Muted.TLabel").grid(row=2, column=1, sticky="w",
+                                             pady=(4, 0))
+
+        options = ttk.Frame(self.tab_flac, style="Card.TFrame", padding=14)
+        options.pack(fill="x", pady=(12, 0))
+        for key, text in (
+            ("flac_after_sync",
+             "Convertir al terminar la sincronizacion, lo ultimo de la cola "
+             "(y en la tarea programada)"),
+            ("flac_normalize",
+             "Normalizar el volumen (loudnorm, como el flac2alac.bat de siempre)"),
+            ("flac_keep_artwork", "Conservar la caratula si el FLAC la trae"),
+            ("flac_delete_source",
+             f"Borrar el FLAC al convertirlo (si no, se mueve a '{DONE_DIR}')"),
+        ):
+            var = tk.BooleanVar(value=bool(self.cfg.get(key)))
+            self.vars[key] = var
+            ttk.Checkbutton(options, text=text, variable=var).pack(anchor="w",
+                                                                   pady=2)
+
+        sched = ttk.Frame(options, style="Card.TFrame")
+        sched.pack(fill="x", pady=(12, 0))
+        ttk.Label(sched, text="O por su cuenta, revisando cada 24 h a las",
+                  style="Card.TLabel").pack(side="left")
+        self.flac_time_var = tk.StringVar(
+            value=str(self.cfg.get("flac_schedule_time", "04:00")))
+        ttk.Entry(sched, textvariable=self.flac_time_var,
+                  width=7).pack(side="left", padx=8)
+        self.flac_schedule_button = ttk.Button(
+            sched, text="Activar", command=self._toggle_flac_schedule)
+        self.flac_schedule_button.pack(side="left")
+        self.flac_schedule_label = ttk.Label(sched, text="", style="Muted.TLabel")
+        self.flac_schedule_label.pack(side="left", padx=(12, 0))
+
+        row = ttk.Frame(self.tab_flac)
+        row.pack(fill="x", pady=14)
+        self.flac_button = ttk.Button(row, text="Convertir ahora",
+                                      style="Accent.TButton",
+                                      command=self._start_flac)
+        self.flac_button.pack(side="left")
+        ttk.Button(row, text="Guardar ajustes",
+                   command=self._save_settings).pack(side="left", padx=(8, 0))
+        self._refresh_flac_status()
+        self._refresh_flac_schedule()
+
+    def _refresh_flac_schedule(self) -> None:
+        exists = scheduler.task_exists(scheduler.FLAC)
+        self.flac_schedule_button.configure(
+            text="Desactivar" if exists else "Activar")
+        self.flac_schedule_label.configure(
+            text=scheduler.task_info(scheduler.FLAC) if exists else "")
+
+    def _toggle_flac_schedule(self) -> None:
+        if scheduler.task_exists(scheduler.FLAC):
+            ok, msg = scheduler.delete_task(scheduler.FLAC)
+        else:
+            time_value = self.flac_time_var.get().strip() or "04:00"
+            if not _valid_time(time_value):
+                messagebox.showwarning("Hora no valida",
+                                       "Usa el formato HH:MM, por ejemplo 04:00.")
+                return
+            self.cfg.set("flac_schedule_time", time_value)
+            self.cfg.save()
+            ok, msg = scheduler.create_task(time_value, scheduler.FLAC)
+        self._append(msg, "ok" if ok else "err")
+        if not ok:
+            messagebox.showerror("Tarea programada", msg)
+        self._refresh_flac_schedule()
+
+    def _refresh_flac_status(self) -> None:
+        ok, reason = flac_diagnose(self.cfg)
+        self.flac_status.configure(text=("✓ " if ok else "✗ ") + reason,
+                                   fg=SPOTIFY_GREEN if ok else "#ff6b6b")
+
+    def _browse_flac_folder(self) -> None:
+        chosen = filedialog.askdirectory(
+            parent=self, title="Carpeta con los FLAC",
+            initialdir=str(self.vars["flac_folder"].get() or "C:\\"))
+        if chosen:
+            self.vars["flac_folder"].set(os.path.normpath(chosen))
+
+    def _browse_ffmpeg(self) -> None:
+        chosen = filedialog.askopenfilename(
+            parent=self, title="Elige ffmpeg.exe",
+            filetypes=[("ffmpeg", "ffmpeg.exe"), ("Programas", "*.exe")])
+        if chosen:
+            self.vars["ffmpeg_path"].set(os.path.normpath(chosen))
+
+    def _start_flac(self) -> None:
+        if self.worker and self.worker.is_alive():
+            return
+        if not self._save_settings(silent=True):
+            messagebox.showwarning(
+                "Revisa los ajustes",
+                "No se puede continuar porque hay un ajuste no valido.\n\n"
+                + (self._validate_settings() or ""))
+            return
+        self.stop_flag.clear()
+        self._set_busy(True)
+        self.stop_button.configure(state="normal")
+        self._append("")
+        self.worker = threading.Thread(target=self._flac_worker, daemon=True)
+        self.worker.start()
+
+    def _flac_worker(self) -> None:
+        try:
+            converter = FlacConverter(Config.load(), self._q_log,
+                                      self.stop_flag.is_set)
+            self.queue.put(("ok", converter.run().summary()))
+        except ConvertError as exc:
+            self.queue.put(("error", str(exc)))
+        except Exception as exc:  # noqa: BLE001
+            self.queue.put(("error", f"Error inesperado: {exc}"))
+        finally:
+            self.queue.put(("done", None))
+
     def _build_settings_tab(self) -> None:
         creds = ttk.Frame(self.tab_settings, style="Card.TFrame", padding=14)
         creds.pack(fill="x")
@@ -676,6 +830,8 @@ class App(tk.Tk):
                 self.cfg.set("direction", code)
                 break
         self.cfg.set("schedule_time", self.time_var.get().strip() or "03:00")
+        self.cfg.set("flac_schedule_time",
+                     self.flac_time_var.get().strip() or "04:00")
 
         try:
             self.cfg.save()
@@ -689,6 +845,7 @@ class App(tk.Tk):
 
         self._show_save_status("Ajustes guardados", ok=True)
         self._append("Ajustes guardados.", "ok")
+        self._refresh_flac_status()   # la ruta de ffmpeg puede haber cambiado
         return True
 
     def _itunes_chosen(self) -> list[str]:
@@ -711,6 +868,9 @@ class App(tk.Tk):
 
         if not _valid_time(self.time_var.get().strip() or "03:00"):
             return "La hora de la sincronizacion automatica debe tener el formato HH:MM."
+
+        if not _valid_time(self.flac_time_var.get().strip() or "04:00"):
+            return "La hora del repaso de FLAC debe tener el formato HH:MM."
 
         for key, name in (("spotify_redirect_uri", "Spotify"),
                           ("tidal_redirect_uri", "TIDAL")):
@@ -752,6 +912,7 @@ class App(tk.Tk):
         self.sync_button.configure(state="disabled" if busy else "normal")
         self.itunes_button.configure(state="disabled" if busy else "normal")
         self.itunes_load_button.configure(state="disabled" if busy else "normal")
+        self.flac_button.configure(state="disabled" if busy else "normal")
         self.sp_button.configure(state="disabled" if busy else "normal")
         self.td_button.configure(state="disabled" if busy else "normal")
         if busy:

@@ -6,7 +6,8 @@ mediante el Programador de tareas de Windows, sincronización manual desde una
 interfaz gráfica, e inicio de sesión OAuth 2.0 con PKCE en el navegador.
 
 Además puede **volcar las playlists de TIDAL en iTunes**, emparejándolas con la
-música que ya tienes en la biblioteca local de este equipo.
+música que ya tienes en la biblioteca local de este equipo, y **convertir a ALAC
+los FLAC** que iTunes no sabe leer.
 
 ```
 ┌─ Interfaz (tkinter) ──────────────────────────────────────┐
@@ -147,6 +148,58 @@ equivalencia entre Spotify y TIDAL.
 El *Modo simulación* también vale aquí: enseña qué playlists crearía y cuántas
 canciones añadiría sin tocar iTunes.
 
+---
+
+## Convertir FLAC a ALAC
+
+Pestaña **FLAC a ALAC**. iTunes no sabe leer FLAC: lo que dejas en la carpeta de
+auto-añadir acaba arrinconado en su subcarpeta `No añadido\<fecha>\`. Esto recorre
+esa carpeta entera, convierte cada FLAC a ALAC con **ffmpeg** y deja el `.m4a` en
+la raíz, que es donde iTunes sí lo recoge solo.
+
+Necesita ffmpeg: `winget install Gyan.FFmpeg`, o indica la ruta a `ffmpeg.exe` en
+la pestaña. Arriba te dice en verde o en rojo si está listo.
+
+| Ajuste | Qué hace |
+|---|---|
+| **Carpeta** | Dónde buscar los FLAC y dónde dejar los ALAC. Por defecto `C:\Music\iTunes\iTunes Media\Añadir automáticamente a iTunes`. Busca en subcarpetas; los `.m4a` van siempre a la raíz. |
+| **Convertir al terminar la sincronización** | Igual que la opción de iTunes: se encadena como **último paso de la cola**, después del volcado de playlists, y entra en la tarea diaria de las 24 h sin registrar nada nuevo. |
+| **Normalizar el volumen** | `loudnorm=I=-9:TP=-1.5:LRA=11`, lo mismo que hacía el `flac2alac.bat` de siempre. |
+| **Conservar la carátula** | Copia la portada al `.m4a`. Si ffmpeg la rechaza, reintenta sin ella en vez de dar el fichero por perdido. |
+| **Borrar el FLAC** | Al convertirlo bien. Si lo desmarcas, el original se mueve a `_convertidos\` en vez de borrarse. En ambos casos deja de reconvertirse la próxima vez. |
+
+Viene del `flac2alac.bat` de siempre y cambia en tres cosas, todas para no perder
+nada:
+
+- Mira **cómo terminó ffmpeg**, no si el fichero destino existe. iTunes se lleva
+  el `.m4a` en cuanto aparece, así que la comprobación del `.bat` podía fallar y
+  dejar el FLAC sin recoger.
+- **No machaca** un `.m4a` que ya estuviera ahí: el segundo pasa a ser `nombre (2).m4a`.
+  El `.bat` usaba `ffmpeg -y` y lo sobrescribía.
+- Si algo falla, el FLAC **no se borra** y el `.m4a` a medias se limpia.
+
+Al terminar borra las carpetas vacías que quedan dentro (`No añadido\<fecha>\`).
+Con *Modo simulación* te dice qué convertiría sin tocar nada.
+
+### Que lo revise solo una vez al día
+
+Dos formas, y puedes usar la que prefieras:
+
+1. **Encadenado a la sincronización** — marca *Convertir al terminar la
+   sincronización*. Va detrás del volcado a iTunes, en la misma ejecución diaria.
+   Es lo mismo que hace la opción de iTunes: no crea ninguna tarea nueva.
+2. **Por su cuenta** — pulsa *Activar* junto a la hora (por defecto las **04:00**,
+   una hora después de la sincronización). Registra en Windows una segunda tarea,
+   `SpotifyTidalSync - FLAC a ALAC`, independiente de la otra: puedes tener una,
+   la otra o las dos. Al lado te enseña la última y la próxima ejecución.
+
+Si lo único que quieres es el repaso de FLAC, sin sincronizar Spotify ni TIDAL,
+usa la segunda: no necesita cuentas conectadas.
+
+Desde la línea de comandos: `python main.py --flac2alac`, el lanzador
+`convertir-flac.bat`, o `python main.py --schedule-flac 04:00` /
+`--unschedule-flac` para la tarea diaria.
+
 ## Uso desde la línea de comandos
 
 ```
@@ -154,13 +207,14 @@ python main.py                  interfaz gráfica
 python main.py --sync           sincroniza una vez y sale
 python main.py --itunes         solo vuelca las playlists de TIDAL en iTunes
 python main.py --itunes --playlist "La Caseta"   solo esa playlist
+python main.py --flac2alac      convierte los FLAC de la carpeta de iTunes a ALAC
 python main.py --status         estado de cuentas, ajustes y tarea programada
 python main.py --dry-run --sync simulación
 python main.py --schedule 03:00 registra la tarea diaria
 python main.py --unschedule     la elimina
 ```
 
-O los lanzadores: `sincronizar-ahora.bat`, `estado.bat` y
+O los lanzadores: `sincronizar-ahora.bat`, `estado.bat`, `convertir-flac.bat` y
 `sincronizar-itunes.bat` (que acepta el nombre de una playlist como argumento).
 
 ## Dónde vive todo
@@ -178,12 +232,20 @@ O los lanzadores: `sincronizar-ahora.bat`, `estado.bat` y
 Si borras `state.json`, la siguiente sincronización vuelve a partir de cero: es
 inocua (solo une), pero perderá la referencia para propagar borrados.
 
-## La tarea programada
+## Las tareas programadas
 
-Se registra como `SpotifyTidalSync` en el contexto de tu usuario, **sin permisos
-de administrador**. Usa `pythonw.exe`, así que no aparece ninguna ventana. Lleva
-`StartWhenAvailable`: si el equipo estaba apagado a la hora prevista, se ejecuta
-al arrancar. Puedes verla en *Programador de tareas* → *Biblioteca*.
+Son dos, independientes entre sí:
+
+| Tarea | Qué ejecuta | Se activa en |
+|---|---|---|
+| `SpotifyTidalSync` | `main.py --sync` (con iTunes y la conversión de FLAC detrás, si los has marcado) | Pestaña *Sincronización* |
+| `SpotifyTidalSync - FLAC a ALAC` | `main.py --flac2alac` | Pestaña *FLAC a ALAC* |
+
+Se registran en el contexto de tu usuario, **sin permisos de administrador**. Usan
+`pythonw.exe`, así que no aparece ninguna ventana. Llevan `StartWhenAvailable`: si
+el equipo estaba apagado a la hora prevista, se ejecutan al arrancar. Puedes verlas
+en *Programador de tareas* → *Biblioteca*, y `estado.bat` te dice de las dos cuándo
+corrieron por última vez y cuándo toca la siguiente.
 
 ## Copiar el proyecto a otro equipo o a una máquina virtual
 

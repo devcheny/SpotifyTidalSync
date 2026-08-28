@@ -30,6 +30,18 @@ DEFAULTS: dict[str, Any] = {
     "itunes_remove_extra": False,     # quitar de iTunes lo que ya no esta en TIDAL
     "itunes_missing_playlist": False, # dejar en TIDAL "<nombre> - Faltantes en iTunes"
 
+    # --- Conversion de FLAC a ALAC (necesita ffmpeg) ---
+    # La n con virgulilla va escapada para que la ruta siga siendo correcta
+    # aunque este fichero se copie con otra codificacion.
+    "flac_folder": "C:\\Music\\iTunes\\iTunes Media\\"
+                   "A\u00f1adir autom\u00e1ticamente a iTunes",
+    "flac_normalize": True,           # loudnorm, como el flac2alac.bat de siempre
+    "flac_keep_artwork": True,        # copiar la caratula al .m4a si la trae
+    "flac_delete_source": True,       # borrar el FLAC tras convertirlo bien
+    "ffmpeg_path": "",                # vacio = buscarlo en el PATH
+    "flac_after_sync": False,         # convertir al terminar la sincronizacion
+    "flac_schedule_time": "04:00",    # o repaso propio, una hora despues
+
     # --- Comportamiento ---
     "country_code": "ES",            # ISO 3166-1 alpha-2, para el catalogo de TIDAL
     "dry_run": False,                # simula: no escribe nada en las cuentas

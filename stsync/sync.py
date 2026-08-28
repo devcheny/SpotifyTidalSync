@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from .config import Config
+from .convert import ConvertError, FlacConverter
 from .http import ApiError
 from .itunes import ITunesError, ITunesSync
 from .model import Track, normalize
@@ -34,6 +35,7 @@ class Stats:
     playlists_created: int = 0
     added_to_itunes: int = 0
     itunes_playlists: int = 0
+    flac_converted: int = 0
     unmatched: list[tuple[str, str]] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
@@ -48,6 +50,8 @@ class Stats:
         if self.itunes_playlists or self.added_to_itunes:
             parts.append(f"Anadidas a iTunes: {self.added_to_itunes} "
                          f"({self.itunes_playlists} playlists)")
+        if self.flac_converted:
+            parts.append(f"FLAC convertidos: {self.flac_converted}")
         parts.append(f"Sin equivalencia: {len(self.unmatched)}")
         return " | ".join(parts)
 
@@ -85,6 +89,8 @@ class SyncEngine:
             self._sync_playlists()
         if self.cfg.get("itunes_enabled") and not self.should_stop():
             self._sync_itunes()
+        if self.cfg.get("flac_after_sync") and not self.should_stop():
+            self._convert_flac()
 
         self.state.last_sync = dt.datetime.now().isoformat(timespec="seconds")
         self.state.data["last_summary"] = self.stats.summary()
@@ -135,6 +141,22 @@ class SyncEngine:
         # Van al mismo informe CSV que las que no tienen equivalencia online.
         self.stats.unmatched.extend(
             (f"itunes / {playlist}", song) for playlist, song in result.missing)
+        self.log(f"  {result.summary()}")
+
+    # ------------------------------------------------------------------- FLAC
+    def _convert_flac(self) -> None:
+        """Ultimo paso de la cola: pasar a ALAC lo que iTunes no pudo leer."""
+        try:
+            result = FlacConverter(self.cfg, self.log, self.should_stop).run()
+        except ConvertError as exc:
+            message = f"FLAC a ALAC: {exc}"
+            self.log(f"  ! {message}")
+            self.stats.errors.append(message)
+            return
+
+        self.stats.flac_converted += result.converted
+        self.stats.errors.extend(f"FLAC '{name}': {reason}"
+                                 for name, reason in result.failed)
         self.log(f"  {result.summary()}")
 
     # -------------------------------------------------------------- favoritos
