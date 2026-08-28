@@ -23,6 +23,13 @@ DEFAULTS: dict[str, Any] = {
     "playlist_exclude": [],          # nombres de playlist a ignorar
     "playlist_include": [],          # si no esta vacio, SOLO estas se sincronizan
 
+    # --- iTunes (Windows, con iTunes de Apple instalado) ---
+    "itunes_enabled": False,          # volcar las playlists de TIDAL en cada sync
+    "itunes_playlist_prefix": "TIDAL - ",
+    "itunes_playlists": [],           # vacio = todas las playlists de TIDAL
+    "itunes_remove_extra": False,     # quitar de iTunes lo que ya no esta en TIDAL
+    "itunes_missing_playlist": False, # dejar en TIDAL "<nombre> - Faltantes en iTunes"
+
     # --- Comportamiento ---
     "country_code": "ES",            # ISO 3166-1 alpha-2, para el catalogo de TIDAL
     "dry_run": False,                # simula: no escribe nada en las cuentas

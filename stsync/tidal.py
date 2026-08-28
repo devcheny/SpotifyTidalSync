@@ -10,6 +10,9 @@ Endpoints usados (confirmados contra la especificacion OpenAPI publica):
   GET  /playlists/{id}/relationships/items
   POST /playlists/{id}/relationships/items               (max 20 por peticion)
   GET  /tracks?filter[isrc]=...
+
+Las relaciones de pistas se piden con include=items.artists para que llegue
+tambien el nombre del artista y no solo su id.
 """
 from __future__ import annotations
 
@@ -117,6 +120,36 @@ class TidalClient:
             seen.add(cursor)
             params["page[cursor]"] = cursor
 
+    def _collect(self, path: str) -> list[Track]:
+        """Lee todas las paginas de una relacion de pistas.
+
+        Se pide include=items.artists porque sin el TIDAL solo devuelve los ids
+        de los artistas: el nombre llega vacio y no hay forma de comparar por
+        texto (ni con iTunes ni con Spotify). Si el servidor no acepta ese
+        include se reintenta con el basico y se sigue como hasta ahora.
+        """
+        for include in ("items.artists", "items"):
+            params = {"countryCode": self.country, "include": include,
+                      "locale": "en-US"}
+            raw_tracks: list[dict[str, Any]] = []
+            artists: dict[str, str] = {}
+            try:
+                for page in self._paginate(path, params):
+                    for raw in page.get("included") or []:
+                        if raw.get("type") == "tracks":
+                            raw_tracks.append(raw)
+                        elif raw.get("type") == "artists":
+                            name = (raw.get("attributes") or {}).get("name")
+                            if raw.get("id") and name:
+                                artists[str(raw["id"])] = str(name)
+            except ApiError:
+                if include == "items":
+                    raise
+                self.log("    TIDAL rechazo include=items.artists, reintento simple")
+                continue
+            return [t for t in (_to_track(r, artists) for r in raw_tracks) if t]
+        return []
+
     # -- usuario ------------------------------------------------------------
     def me(self) -> dict[str, Any]:
         if self._user is None:
@@ -135,13 +168,7 @@ class TidalClient:
 
     # -- favoritos ----------------------------------------------------------
     def favorite_tracks(self) -> list[Track]:
-        out: list[Track] = []
-        params = {"countryCode": self.country, "include": "items", "locale": "en-US"}
-        for page in self._paginate("/userCollectionTracks/me/relationships/items", params):
-            for raw in page.get("included") or []:
-                track = _to_track(raw)
-                if track:
-                    out.append(track)
+        out = self._collect("/userCollectionTracks/me/relationships/items")
         self.log(f"  TIDAL: {len(out)} favoritos leidos")
         return out
 
@@ -169,14 +196,7 @@ class TidalClient:
         return out
 
     def playlist_tracks(self, playlist_id: str) -> list[Track]:
-        out: list[Track] = []
-        params = {"countryCode": self.country, "include": "items", "locale": "en-US"}
-        for page in self._paginate(f"/playlists/{playlist_id}/relationships/items", params):
-            for raw in page.get("included") or []:
-                track = _to_track(raw)
-                if track:
-                    out.append(track)
-        return out
+        return self._collect(f"/playlists/{playlist_id}/relationships/items")
 
     def create_playlist(self, name: str, description: str = "") -> dict[str, Any]:
         if self.cfg.dry_run:
@@ -230,7 +250,8 @@ class TidalClient:
 
 
 # --------------------------------------------------------------------------
-def _to_track(raw: dict[str, Any] | None) -> Track | None:
+def _to_track(raw: dict[str, Any] | None,
+              artists: dict[str, str] | None = None) -> Track | None:
     if not raw or raw.get("type") != "tracks" or not raw.get("id"):
         return None
     attrs = raw.get("attributes") or {}
@@ -241,23 +262,31 @@ def _to_track(raw: dict[str, Any] | None) -> Track | None:
             if isinstance(link, dict) and link.get("meta", {}).get("type") == "ISRC":
                 isrc = link.get("href", "")
                 break
+    names = _artist_names(raw, artists or {})
     return Track(
         service=SERVICE,
         id=str(raw["id"]),
         title=attrs.get("title", ""),
-        artist=_first_artist(raw),
+        artist=names[0] if names else "",
         album="",
         isrc=isrc,
         duration_ms=_duration_ms(attrs.get("duration")),
+        artists=tuple(names),
     )
 
 
-def _first_artist(raw: dict[str, Any]) -> str:
-    """El nombre del artista solo llega si se pidio include=artists; si no, vacio."""
+def _artist_names(raw: dict[str, Any], artists: dict[str, str]) -> list[str]:
+    """Nombres de los interpretes, del meta de la relacion o de los includes."""
     rel = ((raw.get("relationships") or {}).get("artists") or {}).get("data") or []
-    if rel and isinstance(rel[0], dict):
-        return str(rel[0].get("meta", {}).get("name", "") or "")
-    return ""
+    out: list[str] = []
+    for item in rel:
+        if not isinstance(item, dict):
+            continue
+        name = ((item.get("meta") or {}).get("name")
+                or artists.get(str(item.get("id", "")), ""))
+        if name:
+            out.append(str(name))
+    return out
 
 
 def _duration_ms(value: Any) -> int:

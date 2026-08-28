@@ -5,6 +5,9 @@ Mantiene sincronizados tus favoritos y tus playlists entre Spotify y TIDAL usand
 mediante el Programador de tareas de Windows, sincronización manual desde una
 interfaz gráfica, e inicio de sesión OAuth 2.0 con PKCE en el navegador.
 
+Además puede **volcar las playlists de TIDAL en iTunes**, emparejándolas con la
+música que ya tienes en la biblioteca local de este equipo.
+
 ```
 ┌─ Interfaz (tkinter) ──────────────────────────────────────┐
 │  Conectar cuentas · Sincronizar ahora · Programar 24 h    │
@@ -15,6 +18,8 @@ interfaz gráfica, e inicio de sesión OAuth 2.0 con PKCE en el navegador.
         └───┬────────┬───┘                                   │
             │        │                                       │
    api.spotify.com  openapi.tidal.com/v2          tokens cifrados (DPAPI)
+            │
+            └──► iTunes (COM, local)   emparejamiento por título + artista
 ```
 
 ---
@@ -26,6 +31,9 @@ marca *Add Python to PATH* al instalar).
 
 Doble clic en **`instalar.bat`**. Crea un entorno virtual en `.venv` e instala
 `requests`. Es lo único que hace falta.
+
+También intenta instalar `pywin32`, que solo se usa para hablar con iTunes. Si
+esa parte falla, el instalador lo avisa y continúa: todo lo demás funciona igual.
 
 ## 2. Crear tus apps de desarrollador
 
@@ -95,18 +103,57 @@ lo que ya se sabe que no está.
 Los filtros `playlist_include` y `playlist_exclude` se editan en el `config.json`
 (botón *Abrir carpeta de datos*).
 
+---
+
+## Volcar las playlists de TIDAL en iTunes
+
+Pestaña **iTunes**. Por cada playlist de TIDAL crea (o actualiza) una playlist en
+iTunes llamada `TIDAL - <nombre>` y le añade las canciones **que ya tienes en tu
+biblioteca local**. No descarga nada ni convierte streams en ficheros: lo que no
+tengas se queda fuera y se apunta en el informe.
+
+**Requisitos:** Windows, **iTunes para Windows de apple.com** (la versión de la
+Microsoft Store no se puede automatizar) y `pywin32`. La pestaña te dice en verde
+o en rojo si este equipo cumple, sin necesidad de abrir iTunes para comprobarlo.
+
+**Qué playlists se mantienen:** pulsa *Cargar de TIDAL* y marca las que quieras.
+Al recargar, las que ya no existan en TIDAL siguen apareciendo marcadas en vez de
+desaparecer sin avisar: las quitas tú cuando lo veas. En `config.json` esto es
+`itunes_playlists`, y una lista vacía significa *todas*.
+
+| Ajuste | Qué hace |
+|---|---|
+| **Volcar en iTunes al sincronizar** | Añade el volcado al final de cada sincronización, incluida la tarea programada de las 24 h. Si lo dejas desmarcado, solo se ejecuta cuando lo pides a mano. |
+| **Nombre en iTunes** | Prefijo del nombre de la playlist. Por defecto `TIDAL - `, con el espacio final. |
+| **Qué playlists** | Pulsa *Cargar de TIDAL* y marca las que quieras mantener. O deja marcado *Todas*, que incluye también las que crees en TIDAL más adelante. |
+| **Quitar lo que ya no esté** | Convierte la playlist de iTunes en un espejo: lo que desaparece de TIDAL desaparece de iTunes. Desactivado por defecto (solo añade). |
+| **Playlist de faltantes** | Deja en TIDAL una lista `<nombre> - Faltantes en iTunes` con las canciones que no están en tu biblioteca, cómoda para ir comprándolas o descargándolas. |
+
+Cómo empareja: iTunes **no expone el ISRC**, así que aquí el emparejamiento es por
+texto. Se comparan título y artista normalizados —sin acentos, sin `(Remastered)`,
+sin `feat.`, y con las comas y los puntos y coma tratados igual—, de modo que
+*Despechá* de `ROSALÍA` encuentra a *Despecha* de `Rosalia`, y *La Fama* de
+`ROSALÍA, The Weeknd` encuentra a la de `ROSALÍA; The Weeknd`. Si varias canciones
+comparten título, desempata por duración; si el artista no encaja, **no la añade**.
+
+El *Modo simulación* también vale aquí: enseña qué playlists crearía y cuántas
+canciones añadiría sin tocar iTunes.
+
 ## Uso desde la línea de comandos
 
 ```
 python main.py                  interfaz gráfica
 python main.py --sync           sincroniza una vez y sale
+python main.py --itunes         solo vuelca las playlists de TIDAL en iTunes
+python main.py --itunes --playlist "La Caseta"   solo esa playlist
 python main.py --status         estado de cuentas, ajustes y tarea programada
 python main.py --dry-run --sync simulación
 python main.py --schedule 03:00 registra la tarea diaria
 python main.py --unschedule     la elimina
 ```
 
-O los lanzadores: `sincronizar-ahora.bat` y `estado.bat`.
+O los lanzadores: `sincronizar-ahora.bat`, `estado.bat` y
+`sincronizar-itunes.bat` (que acepta el nombre de una playlist como argumento).
 
 ## Dónde vive todo
 
@@ -166,6 +213,20 @@ en la app y vuelve a conectar para que el token se emita con los permisos nuevos
 **Muchas canciones sin equivalencia** — normal en discos poco comunes o ediciones
 regionales: si el catálogo del otro servicio no tiene esa grabación, no hay nada
 que enlazar. Comprueba también que el código de país sea el tuyo.
+
+**«Falta el paquete pywin32»** — ejecuta `instalar.bat` otra vez en ese equipo.
+
+**«No se ve iTunes en este equipo»** — o no está instalado, o es la versión de la
+Microsoft Store, que no permite automatización. Instala iTunes desde apple.com.
+
+**El volcado a iTunes no encuentra casi nada** — mira el registro: si TIDAL te
+devolvió los artistas vacíos (aparece *«TIDAL rechazó include=items.artists»*), el
+emparejamiento por texto se queda sin la mitad del dato. También conviene revisar
+que en iTunes el campo *Artista* esté relleno, no solo *Artista del álbum*.
+
+**iTunes se abre solo al sincronizar** — es normal: la automatización COM arranca
+el programa. Puedes minimizarlo; la tarea programada lo hará igual en segundo
+plano si iTunes ya está cerrado.
 
 ---
 

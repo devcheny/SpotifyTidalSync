@@ -80,6 +80,15 @@ if errorlevel 1 (
     exit /b 1
 )
 
+rem --- Extra opcional: hablar con iTunes (pywin32) ---
+rem Va aparte de requirements.txt: si falla, el resto de la app sigue sirviendo.
+echo Instalando el soporte opcional para iTunes...
+".venv\Scripts\python.exe" -m pip install "pywin32>=306" --quiet
+if errorlevel 1 (
+    echo   AVISO: no se ha podido instalar pywin32.
+    echo   Todo lo demas funciona: solo quedara sin uso la pestana iTunes.
+)
+
 rem --- Comprobacion final ---
 ".venv\Scripts\python.exe" -c "import requests, tkinter" >nul 2>&1
 if errorlevel 1 (

@@ -2,6 +2,8 @@
 
   python main.py            -> interfaz grafica
   python main.py --sync     -> sincroniza y sale (lo que usa la tarea programada)
+  python main.py --itunes   -> solo vuelca las playlists de TIDAL en iTunes
+  python main.py --itunes --playlist "Mi lista"  -> solo esa playlist
   python main.py --status   -> muestra el estado actual
   python main.py --schedule 03:00 / --unschedule
 """
@@ -44,10 +46,14 @@ def _file_logger():
     return log, handle
 
 
-def run_sync() -> int:
+def run_sync(itunes_only: bool = False, playlist: str | None = None) -> int:
     log, handle = _file_logger()
     try:
-        SyncEngine(Config.load(), log).run()
+        engine = SyncEngine(Config.load(), log)
+        if itunes_only:
+            engine.run_itunes(playlist)
+        else:
+            engine.run()
         return 0
     except (ApiError, OAuthError) as exc:
         log(f"ERROR: {exc}")
@@ -70,9 +76,13 @@ def show_status() -> int:
     print(f"Direccion        : {cfg.direction}")
     print(f"Favoritos        : {'si' if cfg.sync_favorites else 'no'}")
     print(f"Playlists        : {'si' if cfg.sync_playlists else 'no'}")
+    itunes = ("si, prefijo '%s'" % cfg.get("itunes_playlist_prefix", "")
+              if cfg.get("itunes_enabled") else "no")
+    print(f"iTunes           : {itunes}")
     print(f"Borrados         : {'se propagan' if cfg.propagate_deletions else 'no se propagan'}")
     print(f"Simulacion       : {'SI' if cfg.dry_run else 'no'}")
     print(f"Ultima sync      : {state.last_sync or 'nunca'}")
+    print(f"Ultimo iTunes    : {state.data.get('last_itunes_sync', 'nunca')}")
     print(f"Ultimo resumen   : {state.data.get('last_summary', '-')}")
     print(f"Tarea programada : "
           f"{scheduler.task_info() if scheduler.task_exists() else 'no registrada'}")
@@ -86,6 +96,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--sync", action="store_true",
                         help="sincroniza una vez y sale")
+    parser.add_argument("--itunes", action="store_true",
+                        help="vuelca las playlists de TIDAL en iTunes y sale")
+    parser.add_argument("--playlist", metavar="NOMBRE",
+                        help="con --itunes, sincroniza solo esa playlist de TIDAL")
     parser.add_argument("--status", action="store_true",
                         help="muestra el estado y sale")
     parser.add_argument("--schedule", metavar="HH:MM",
@@ -111,6 +125,8 @@ def main(argv: list[str] | None = None) -> int:
         ok, msg = scheduler.delete_task()
         print(msg)
         return 0 if ok else 1
+    if args.itunes or args.playlist:
+        return run_sync(itunes_only=True, playlist=args.playlist)
     if args.sync:
         return run_sync()
 

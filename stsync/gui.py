@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 from . import scheduler
 from .config import Config
 from .http import ApiError
+from .itunes import diagnose as itunes_diagnose
 from .oauth import OAuthError
 from .paths import app_dir
 from .spotify import SpotifyClient
@@ -38,6 +39,7 @@ class App(tk.Tk):
         self.tokens = TokenStore()
         self.state = StateStore()
         self.queue: queue.Queue[tuple[str, object]] = queue.Queue()
+        self.vars: dict[str, tk.Variable] = {}
         self.worker: threading.Thread | None = None
         self.stop_flag = threading.Event()
         self._save_status_job: str | None = None
@@ -97,11 +99,14 @@ class App(tk.Tk):
         notebook = ttk.Notebook(self)
         notebook.pack(fill="both", expand=True, padx=18, pady=(4, 6))
         self.tab_main = ttk.Frame(notebook, padding=14)
+        self.tab_itunes = ttk.Frame(notebook, padding=14)
         self.tab_settings = ttk.Frame(notebook, padding=14)
         notebook.add(self.tab_main, text="Sincronizacion")
+        notebook.add(self.tab_itunes, text="iTunes")
         notebook.add(self.tab_settings, text="Ajustes")
 
         self._build_main_tab()
+        self._build_itunes_tab()
         self._build_settings_tab()
 
     def _build_main_tab(self) -> None:
@@ -172,6 +177,176 @@ class App(tk.Tk):
         button.pack(anchor="w")
         return status, button
 
+    def _build_itunes_tab(self) -> None:
+        intro = ttk.Frame(self.tab_itunes, style="Card.TFrame", padding=14)
+        intro.pack(fill="x")
+        ttk.Label(intro, text="Playlists de TIDAL en iTunes",
+                  style="Head.TLabel").pack(anchor="w")
+        ttk.Label(intro, text="Copia cada playlist de TIDAL a una playlist de iTunes "
+                              "buscando las canciones en la biblioteca que ya tienes "
+                              "en este equipo. No descarga musica: lo que no tengas "
+                              "se apunta en el informe.",
+                  style="Muted.TLabel", wraplength=740,
+                  justify="left").pack(anchor="w", pady=(2, 10))
+        ok, reason = itunes_diagnose()
+        tk.Label(intro, text=("✓ " if ok else "✗ ") + reason, bg=CARD,
+                 fg=SPOTIFY_GREEN if ok else "#ff6b6b", wraplength=740,
+                 justify="left").pack(anchor="w")
+
+        options = ttk.Frame(self.tab_itunes, style="Card.TFrame", padding=14)
+        options.pack(fill="x", pady=(12, 0))
+        for key, text in [
+            ("itunes_enabled",
+             "Volcar en iTunes tambien al sincronizar (y en la tarea programada)"),
+            ("itunes_remove_extra",
+             "Quitar de la playlist de iTunes lo que ya no este en la de TIDAL"),
+            ("itunes_missing_playlist",
+             "Dejar en TIDAL una playlist '<nombre> - Faltantes en iTunes'"),
+        ]:
+            var = tk.BooleanVar(value=bool(self.cfg.get(key)))
+            self.vars[key] = var
+            ttk.Checkbutton(options, text=text, variable=var).pack(anchor="w", pady=2)
+
+        prefix_row = ttk.Frame(options, style="Card.TFrame")
+        prefix_row.pack(anchor="w", pady=(10, 0))
+        ttk.Label(prefix_row, text="Nombre en iTunes",
+                  style="Card.TLabel").pack(side="left", padx=(0, 10))
+        # Sin strip al guardar: el espacio final de "TIDAL - " es intencionado.
+        self.itunes_prefix_var = tk.StringVar(
+            value=str(self.cfg.get("itunes_playlist_prefix", "")))
+        ttk.Entry(prefix_row, textvariable=self.itunes_prefix_var,
+                  width=14).pack(side="left")
+        ttk.Label(prefix_row, text="+ nombre de la playlist de TIDAL",
+                  style="Muted.TLabel").pack(side="left", padx=(8, 0))
+
+        self._build_itunes_picker()
+
+        row = ttk.Frame(self.tab_itunes)
+        row.pack(fill="x", pady=14)
+        self.itunes_button = ttk.Button(row, text="Volcar en iTunes ahora",
+                                        style="Accent.TButton",
+                                        command=self._start_itunes)
+        self.itunes_button.pack(side="left")
+        ttk.Button(row, text="Guardar ajustes",
+                   command=self._save_settings).pack(side="left", padx=(8, 0))
+
+    # -- selector de playlists ----------------------------------------------
+    def _build_itunes_picker(self) -> None:
+        """Lista de playlists con casillas, rellenada desde TIDAL."""
+        picker = ttk.Frame(self.tab_itunes, style="Card.TFrame", padding=14)
+        picker.pack(fill="both", expand=True, pady=(12, 0))
+
+        head = ttk.Frame(picker, style="Card.TFrame")
+        head.pack(fill="x")
+        ttk.Label(head, text="Que playlists se mantienen en iTunes",
+                  style="Card.TLabel").pack(side="left")
+        self.itunes_load_button = ttk.Button(head, text="Cargar de TIDAL",
+                                             command=self._load_itunes_playlists)
+        self.itunes_load_button.pack(side="right")
+
+        # Con "todas" marcado, itunes_playlists se guarda vacio: asi entran
+        # tambien las playlists que crees en TIDAL mas adelante.
+        saved = list(self.cfg.get("itunes_playlists", []) or [])
+        self.itunes_all_var = tk.BooleanVar(value=not saved)
+        ttk.Checkbutton(picker, variable=self.itunes_all_var,
+                        text="Todas, incluidas las que cree mas adelante en TIDAL",
+                        command=self._refresh_itunes_picker).pack(anchor="w",
+                                                                  pady=(6, 4))
+
+        box = ttk.Frame(picker, style="Card.TFrame")
+        box.pack(fill="both", expand=True)
+        self.itunes_canvas = tk.Canvas(box, bg=CARD, highlightthickness=0, height=140)
+        scroll = ttk.Scrollbar(box, command=self.itunes_canvas.yview)
+        self.itunes_canvas.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="right", fill="y")
+        self.itunes_canvas.pack(side="left", fill="both", expand=True)
+
+        self.itunes_items = ttk.Frame(self.itunes_canvas, style="Card.TFrame")
+        self.itunes_canvas.create_window((0, 0), window=self.itunes_items,
+                                         anchor="nw")
+        self.itunes_items.bind(
+            "<Configure>",
+            lambda _e: self.itunes_canvas.configure(
+                scrollregion=self.itunes_canvas.bbox("all")))
+        # La rueda solo se apodera del scroll mientras el raton esta encima.
+        self.itunes_canvas.bind(
+            "<Enter>", lambda _e: self.itunes_canvas.bind_all("<MouseWheel>",
+                                                              self._scroll_itunes))
+        self.itunes_canvas.bind(
+            "<Leave>", lambda _e: self.itunes_canvas.unbind_all("<MouseWheel>"))
+
+        self.itunes_selection: dict[str, tk.BooleanVar] = {}
+        self.itunes_hint = ttk.Label(picker, text="", style="Muted.TLabel",
+                                     wraplength=700, justify="left")
+        self.itunes_hint.pack(anchor="w", pady=(6, 0))
+        self._set_itunes_playlists(saved, checked=set(saved))
+
+    def _scroll_itunes(self, event: tk.Event) -> None:
+        self.itunes_canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+
+    def _set_itunes_playlists(self, names: list[str],
+                              checked: set[str] | None = None) -> None:
+        """Repinta las casillas conservando lo que ya estuviera marcado."""
+        if checked is None:
+            checked = {n for n, var in self.itunes_selection.items() if var.get()}
+        for child in self.itunes_items.winfo_children():
+            child.destroy()
+
+        self.itunes_selection = {}
+        for name in sorted(names, key=str.casefold):
+            var = tk.BooleanVar(value=name in checked)
+            self.itunes_selection[name] = var
+            ttk.Checkbutton(self.itunes_items, text=name,
+                            variable=var).pack(anchor="w", pady=1)
+
+        if not names:
+            self.itunes_hint.configure(
+                text="Pulsa 'Cargar de TIDAL' para elegir playlists una a una.")
+        else:
+            self.itunes_hint.configure(text=f"{len(names)} playlists.")
+        self._refresh_itunes_picker()
+
+    def _refresh_itunes_picker(self) -> None:
+        """Con 'todas' marcado, las casillas de abajo no pintan nada."""
+        state = "disabled" if self.itunes_all_var.get() else "normal"
+        for child in self.itunes_items.winfo_children():
+            child.configure(state=state)
+
+    def _load_itunes_playlists(self) -> None:
+        if self.worker and self.worker.is_alive():
+            return
+        if not self.tokens.has("tidal"):
+            messagebox.showwarning("Falta TIDAL",
+                                   "Conecta TIDAL para poder leer tus playlists.")
+            return
+        self._set_busy(True)
+        self._append("Leyendo las playlists de TIDAL...")
+        self.worker = threading.Thread(target=self._itunes_lists_worker,
+                                       daemon=True)
+        self.worker.start()
+
+    def _itunes_lists_worker(self) -> None:
+        try:
+            client = TidalClient(Config.load(), self.tokens, self._q_log)
+            names = [(p.get("attributes") or {}).get("name", "")
+                     for p in client.my_playlists()]
+            self.queue.put(("playlists", [n for n in names if n]))
+        except (ApiError, OAuthError) as exc:
+            self.queue.put(("error", f"No se pudieron leer las playlists: {exc}"))
+        except Exception as exc:  # noqa: BLE001
+            self.queue.put(("error", f"Error inesperado: {exc}"))
+        finally:
+            self.queue.put(("done", None))
+
+    def _on_itunes_playlists(self, names: list[str]) -> None:
+        marked = {n for n, var in self.itunes_selection.items() if var.get()}
+        # Se conservan las guardadas que ya no esten en TIDAL: si una se borro
+        # alli, que el usuario lo vea y la quite, no que desaparezca en silencio.
+        every = set(names) | set(self.itunes_selection)
+        # Primera carga sin nada elegido: marcar todo es lo menos sorprendente.
+        self._set_itunes_playlists(sorted(every), checked=marked or set(names))
+        self._append(f"{len(names)} playlists leidas de TIDAL.", "ok")
+
     def _build_settings_tab(self) -> None:
         creds = ttk.Frame(self.tab_settings, style="Card.TFrame", padding=14)
         creds.pack(fill="x")
@@ -184,7 +359,6 @@ class App(tk.Tk):
                                        sticky="w", pady=(2, 12))
         creds.columnconfigure(1, weight=1)
 
-        self.vars: dict[str, tk.Variable] = {}
         rows = [
             ("spotify_client_id", "Spotify Client ID",
              "https://developer.spotify.com/dashboard"),
@@ -345,6 +519,38 @@ class App(tk.Tk):
         finally:
             self.queue.put(("done", None))
 
+    def _start_itunes(self) -> None:
+        if self.worker and self.worker.is_alive():
+            return
+        if not self.tokens.has("tidal"):
+            messagebox.showwarning("Falta TIDAL",
+                                   "Conecta TIDAL antes de volcar en iTunes.")
+            return
+        if not self._save_settings(silent=True):
+            messagebox.showwarning(
+                "Revisa los ajustes",
+                "No se puede continuar porque hay un ajuste no valido.\n\n"
+                + (self._validate_settings() or ""))
+            return
+        self.stop_flag.clear()
+        self._set_busy(True)
+        self.stop_button.configure(state="normal")
+        self._append("")
+        self.worker = threading.Thread(target=self._itunes_worker, daemon=True)
+        self.worker.start()
+
+    def _itunes_worker(self) -> None:
+        try:
+            engine = SyncEngine(Config.load(), self._q_log, self.stop_flag.is_set)
+            stats = engine.run_itunes()
+            self.queue.put(("ok", stats.summary()))
+        except (ApiError, OAuthError) as exc:
+            self.queue.put(("error", str(exc)))
+        except Exception as exc:  # noqa: BLE001
+            self.queue.put(("error", f"Error inesperado: {exc}"))
+        finally:
+            self.queue.put(("done", None))
+
     def _stop_sync(self) -> None:
         self.stop_flag.set()
         self._append("Deteniendo despues del paso actual...")
@@ -379,6 +585,9 @@ class App(tk.Tk):
             value = var.get()
             self.cfg.set(key, value.strip() if isinstance(value, str) else value)
         self.cfg.set("country_code", self.country_var.get().strip().upper() or "ES")
+        # El prefijo se guarda tal cual: "TIDAL - " acaba en espacio a proposito.
+        self.cfg.set("itunes_playlist_prefix", self.itunes_prefix_var.get())
+        self.cfg.set("itunes_playlists", self._itunes_chosen())
         for code, label in _DIRECTIONS.items():
             if label == self.direction_var.get():
                 self.cfg.set("direction", code)
@@ -399,8 +608,19 @@ class App(tk.Tk):
         self._append("Ajustes guardados.", "ok")
         return True
 
+    def _itunes_chosen(self) -> list[str]:
+        """Playlists elegidas; lista vacia significa 'todas' para el motor."""
+        if self.itunes_all_var.get():
+            return []
+        return [name for name, var in self.itunes_selection.items() if var.get()]
+
     def _validate_settings(self) -> str | None:
         """Devuelve el motivo por el que no se puede guardar, o None si todo bien."""
+        if self.vars["itunes_enabled"].get() and not self.itunes_all_var.get() \
+                and not self._itunes_chosen():
+            return ("Has activado el volcado a iTunes pero no hay ninguna playlist "
+                    "marcada. Elige alguna o marca 'Todas'.")
+
         country = self.country_var.get().strip()
         if country and not (len(country) == 2 and country.isalpha()):
             return ("El pais debe ser un codigo ISO de 2 letras "
@@ -447,6 +667,8 @@ class App(tk.Tk):
 
     def _set_busy(self, busy: bool) -> None:
         self.sync_button.configure(state="disabled" if busy else "normal")
+        self.itunes_button.configure(state="disabled" if busy else "normal")
+        self.itunes_load_button.configure(state="disabled" if busy else "normal")
         self.sp_button.configure(state="disabled" if busy else "normal")
         self.td_button.configure(state="disabled" if busy else "normal")
         if busy:
@@ -469,6 +691,8 @@ class App(tk.Tk):
                 elif kind == "error":
                     self._append(str(payload), "err")
                     messagebox.showerror("Error", str(payload))
+                elif kind == "playlists":
+                    self._on_itunes_playlists(list(payload))  # type: ignore[arg-type]
                 elif kind == "name":
                     service, name = payload  # type: ignore[misc]
                     self.state.data.setdefault("names", {})[service] = name

@@ -15,6 +15,12 @@ class Track:
     album: str = ""
     isrc: str = ""
     duration_ms: int = 0
+    artists: tuple[str, ...] = ()   # todos los interpretes, si el servicio los da
+
+    @property
+    def credit(self) -> str:
+        """Todos los interpretes juntos, como los suele escribir iTunes."""
+        return ", ".join(self.artists) if self.artists else self.artist
 
     @property
     def key(self) -> str:

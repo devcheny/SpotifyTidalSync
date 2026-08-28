@@ -14,6 +14,7 @@ from typing import Any, Callable
 
 from .config import Config
 from .http import ApiError
+from .itunes import ITunesError, ITunesSync
 from .model import Track, normalize
 from .paths import reports_dir
 from .spotify import SpotifyClient
@@ -31,18 +32,24 @@ class Stats:
     removed_from_spotify: int = 0
     removed_from_tidal: int = 0
     playlists_created: int = 0
+    added_to_itunes: int = 0
+    itunes_playlists: int = 0
     unmatched: list[tuple[str, str]] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
-        return (
-            f"Anadidas a Spotify: {self.added_to_spotify} | "
-            f"Anadidas a TIDAL: {self.added_to_tidal} | "
-            f"Quitadas de Spotify: {self.removed_from_spotify} | "
-            f"Quitadas de TIDAL: {self.removed_from_tidal} | "
-            f"Playlists creadas: {self.playlists_created} | "
-            f"Sin equivalencia: {len(self.unmatched)}"
-        )
+        parts = [
+            f"Anadidas a Spotify: {self.added_to_spotify}",
+            f"Anadidas a TIDAL: {self.added_to_tidal}",
+            f"Quitadas de Spotify: {self.removed_from_spotify}",
+            f"Quitadas de TIDAL: {self.removed_from_tidal}",
+            f"Playlists creadas: {self.playlists_created}",
+        ]
+        if self.itunes_playlists or self.added_to_itunes:
+            parts.append(f"Anadidas a iTunes: {self.added_to_itunes} "
+                         f"({self.itunes_playlists} playlists)")
+        parts.append(f"Sin equivalencia: {len(self.unmatched)}")
+        return " | ".join(parts)
 
 
 class SyncEngine:
@@ -76,6 +83,8 @@ class SyncEngine:
             self._sync_favorites()
         if self.cfg.sync_playlists and not self.should_stop():
             self._sync_playlists()
+        if self.cfg.get("itunes_enabled") and not self.should_stop():
+            self._sync_itunes()
 
         self.state.last_sync = dt.datetime.now().isoformat(timespec="seconds")
         self.state.data["last_summary"] = self.stats.summary()
@@ -86,6 +95,47 @@ class SyncEngine:
         self.log(self.stats.summary())
         self.log(f"Terminado en {time.time() - started:.1f}s")
         return self.stats
+
+    def run_itunes(self, only_playlist: str | None = None) -> Stats:
+        """Solo el volcado TIDAL -> iTunes, sin tocar Spotify."""
+        started = time.time()
+        self.log("=" * 62)
+        self.log(f"Volcado a iTunes iniciado {dt.datetime.now():%Y-%m-%d %H:%M:%S}")
+        if self.cfg.dry_run:
+            self.log("MODO SIMULACION: no se escribira nada")
+
+        if not self.tokens.has("tidal"):
+            raise ApiError("Conecta TIDAL antes de sincronizar con iTunes.")
+        self.log(f"TIDAL: {self.tidal.display_name}")
+
+        self._sync_itunes(only_playlist)
+
+        self.state.data["last_itunes_sync"] = (
+            dt.datetime.now().isoformat(timespec="seconds"))
+        self.state.save()
+
+        self._write_unmatched_report()
+        self.log("-" * 62)
+        self.log(f"Terminado en {time.time() - started:.1f}s")
+        return self.stats
+
+    # ----------------------------------------------------------------- iTunes
+    def _sync_itunes(self, only_playlist: str | None = None) -> None:
+        engine = ITunesSync(self.cfg, self.tidal, self.log, self.should_stop)
+        try:
+            result = engine.run(only_playlist)
+        except ITunesError as exc:
+            message = f"iTunes: {exc}"
+            self.log(f"  ! {message}")
+            self.stats.errors.append(message)
+            return
+
+        self.stats.added_to_itunes += result.added
+        self.stats.itunes_playlists += result.playlists
+        # Van al mismo informe CSV que las que no tienen equivalencia online.
+        self.stats.unmatched.extend(
+            (f"itunes / {playlist}", song) for playlist, song in result.missing)
+        self.log(f"  {result.summary()}")
 
     # -------------------------------------------------------------- favoritos
     def _sync_favorites(self) -> None:

@@ -1,1 +1,5 @@
 requests>=2.31
+
+# pywin32 no va aqui a proposito: solo hace falta para la pestana iTunes y lo
+# instala "instalar.bat" en un paso aparte, para que un fallo suyo no impida
+# usar el resto de la aplicacion.
