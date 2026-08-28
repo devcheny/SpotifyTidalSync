@@ -42,6 +42,21 @@ def reports_dir() -> Path:
     return d
 
 
+def latest_report() -> Path | None:
+    """El informe de canciones sin equivalencia mas reciente, si hay alguno.
+
+    A diferencia de reports_dir(), consultar no crea la carpeta: no tiene
+    sentido dejar una carpeta vacia solo por haber preguntado.
+    """
+    folder = app_dir() / "reports"
+    if not folder.is_dir():
+        return None
+    reports = list(folder.glob("sin-equivalencia-*.csv"))
+    if not reports:
+        return None
+    return max(reports, key=lambda p: p.stat().st_mtime)
+
+
 def project_dir() -> Path:
     """Carpeta donde vive el codigo (para la tarea programada)."""
     return Path(__file__).resolve().parent.parent

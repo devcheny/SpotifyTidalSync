@@ -1,11 +1,16 @@
 """Interfaz grafica (tkinter): inicio de sesion, sincronizacion manual y ajustes."""
 from __future__ import annotations
 
+import csv
+import datetime as dt
+import os
 import queue
+import shutil
 import threading
 import tkinter as tk
 import webbrowser
-from tkinter import messagebox, ttk
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
 from urllib.parse import urlparse
 
 from . import scheduler
@@ -13,7 +18,7 @@ from .config import Config
 from .http import ApiError
 from .itunes import diagnose as itunes_diagnose
 from .oauth import OAuthError
-from .paths import app_dir
+from .paths import app_dir, latest_report
 from .spotify import SpotifyClient
 from .store import StateStore, TokenStore
 from .sync import SyncEngine
@@ -86,6 +91,13 @@ class App(tk.Tk):
                         insertcolor=FG, borderwidth=0)
         style.configure("TCombobox", fieldbackground="#22242e", foreground=FG,
                         background="#22242e", arrowcolor=FG)
+        style.configure("Treeview", background="#0e0f16", fieldbackground="#0e0f16",
+                        foreground="#cfd0dd", borderwidth=0, rowheight=22)
+        style.configure("Treeview.Heading", background="#22242e", foreground=FG,
+                        borderwidth=0, padding=(8, 6))
+        style.map("Treeview", background=[("selected", "#2b2e3c")],
+                  foreground=[("selected", FG)])
+        style.map("Treeview.Heading", background=[("active", "#2b2e3c")])
 
     # ---------------------------------------------------------------------- UI
     def _build_ui(self) -> None:
@@ -132,7 +144,19 @@ class App(tk.Tk):
                                       state="disabled")
         self.stop_button.pack(side="left", padx=(8, 0))
         ttk.Button(row, text="Abrir carpeta de datos",
-                   command=lambda: webbrowser.open(str(app_dir()))).pack(side="right")
+                   command=self._open_data_dir).pack(side="right")
+        ttk.Button(row, text="Ver informe",
+                   command=self._open_report).pack(side="right", padx=(0, 8))
+
+        # La ruta a la vista: %APPDATA% cambia con el usuario, y si la app se
+        # abre elevada los datos acaban en el perfil de otra cuenta.
+        path_row = ttk.Frame(actions, style="Card.TFrame")
+        path_row.pack(fill="x", pady=(10, 0))
+        self.data_path = tk.Label(path_row, text=f"Datos en: {app_dir()}",
+                                  bg=CARD, fg=MUTED, cursor="hand2",
+                                  font=("Segoe UI", 8), anchor="w")
+        self.data_path.pack(side="left")
+        self.data_path.bind("<Button-1>", self._copy_data_path)
 
         sched = ttk.Frame(actions, style="Card.TFrame")
         sched.pack(fill="x", pady=(12, 0))
@@ -229,6 +253,65 @@ class App(tk.Tk):
         self.itunes_button.pack(side="left")
         ttk.Button(row, text="Guardar ajustes",
                    command=self._save_settings).pack(side="left", padx=(8, 0))
+        ttk.Button(row, text="Ver que falta en iTunes",
+                   command=self._open_report).pack(side="right")
+
+    def _open_report(self) -> None:
+        """Muestra el ultimo informe dentro de la aplicacion.
+
+        Se lee aqui, con el mismo proceso que lo escribio, en vez de delegar en
+        el Explorador: asi funciona aunque la carpeta de datos este en el perfil
+        de otro usuario de Windows.
+        """
+        path = latest_report()
+        if path is None:
+            messagebox.showinfo(
+                "Todavia no hay informe",
+                "El informe se crea al terminar una sincronizacion en la que "
+                "alguna cancion no tenga equivalencia, o no este en tu "
+                "biblioteca de iTunes.\n\nSe guardaria en:\n"
+                f"{app_dir()}\\reports")
+            return
+        self._show_csv(path)
+
+    def _show_csv(self, path: Path) -> None:
+        try:
+            with path.open(newline="", encoding="utf-8-sig") as handle:
+                rows = list(csv.reader(handle, delimiter=";"))
+        except OSError as exc:
+            self._append(f"No se pudo leer {path}: {exc}", "err")
+            messagebox.showerror(
+                "No se pudo leer el informe",
+                f"{path}\n\n{exc}\n\nSi lo tienes abierto en Excel, cierralo.")
+            return
+        ReportWindow(self, path, rows)
+
+    def _open_data_dir(self) -> None:
+        """Enseña la carpeta desde dentro de la aplicacion.
+
+        El Explorador corre con la cuenta de tu sesion; si la app va con otra
+        (elevada, por ejemplo), no puede entrar en esa carpeta aunque exista.
+        Aqui la leemos con el proceso que si tiene acceso.
+        """
+        DataFolderWindow(self, app_dir())
+
+    def _open_path(self, path: Path, what: str) -> None:
+        """Abre una ruta con el programa asociado, explicando si no se puede."""
+        try:
+            os.startfile(str(path))
+        except OSError as exc:
+            self._append(f"No se pudo abrir {path}: {exc}", "err")
+            messagebox.showerror(
+                f"No se pudo abrir {what}",
+                f"{path}\n\n{exc}\n\n"
+                "Si abriste la aplicacion como administrador, tus datos van al "
+                "perfil de ESE usuario y el Explorador de tu sesion no puede "
+                "entrar ahi. Cierra la aplicacion y abrela con tu usuario normal.")
+
+    def _copy_data_path(self, _event=None) -> None:
+        self.clipboard_clear()
+        self.clipboard_append(str(app_dir()))
+        self._append(f"Ruta copiada al portapapeles: {app_dir()}", "ok")
 
     # -- selector de playlists ----------------------------------------------
     def _build_itunes_picker(self) -> None:
@@ -710,6 +793,229 @@ class App(tk.Tk):
         self.log_text.insert("end", message + "\n", tag or ())
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
+
+
+class DataFolderWindow(tk.Toplevel):
+    """Contenido de la carpeta de datos, leido por la propia aplicacion."""
+
+    TEXTO = {".log", ".json", ".txt", ".yml", ".csv"}
+
+    def __init__(self, app: "App", folder: Path) -> None:
+        super().__init__(app)
+        self.app = app
+        self.folder = folder
+        self.title("Carpeta de datos")
+        self.geometry("820x520")
+        self.minsize(560, 340)
+        self.configure(bg=BG)
+        self.files: list[Path] = []
+
+        top = ttk.Frame(self, padding=(14, 12, 14, 6))
+        top.pack(fill="x")
+        ttk.Label(top, text="Carpeta de datos", style="Title.TLabel").pack(anchor="w")
+        tk.Label(top, text=str(folder), bg=BG, fg=MUTED, font=("Segoe UI", 8),
+                 anchor="w").pack(anchor="w", pady=(2, 0))
+
+        table = ttk.Frame(self, padding=(14, 0))
+        table.pack(fill="both", expand=True)
+        columns = ("nombre", "tamano", "modificado")
+        self.tree = ttk.Treeview(table, columns=columns, show="headings")
+        for name, width, stretch in (("nombre", 420, True), ("tamano", 110, False),
+                                     ("modificado", 160, False)):
+            self.tree.heading(name, text=name.capitalize())
+            self.tree.column(name, width=width, stretch=stretch, anchor="w")
+        scroll = ttk.Scrollbar(table, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="right", fill="y")
+        self.tree.pack(side="left", fill="both", expand=True)
+        self.tree.bind("<Double-1>", lambda _e: self._view())
+
+        row = ttk.Frame(self, padding=14)
+        row.pack(fill="x")
+        ttk.Button(row, text="Ver", style="Accent.TButton",
+                   command=self._view).pack(side="left")
+        ttk.Button(row, text="Guardar copia...",
+                   command=self._save_copy).pack(side="left", padx=(8, 0))
+        ttk.Button(row, text="Probar con el Explorador",
+                   command=lambda: app._open_path(folder, "la carpeta de datos")
+                   ).pack(side="left", padx=(8, 0))
+        ttk.Button(row, text="Cerrar", command=self.destroy).pack(side="right")
+
+        self._fill()
+        self.transient(app)
+        self.bind("<Escape>", lambda _e: self.destroy())
+
+    def _fill(self) -> None:
+        for path in sorted(self.folder.rglob("*")):
+            if not path.is_file():
+                continue
+            try:
+                info = path.stat()
+            except OSError:
+                continue
+            self.files.append(path)
+            self.tree.insert("", "end", values=(
+                str(path.relative_to(self.folder)),
+                _human_size(info.st_size),
+                dt.datetime.fromtimestamp(info.st_mtime).strftime("%d/%m/%Y %H:%M"),
+            ))
+        if not self.files:
+            self.tree.insert("", "end", values=("(carpeta vacia)", "", ""))
+
+    def _selected(self) -> Path | None:
+        items = self.tree.selection() or self.tree.get_children()[:1]
+        if not items or not self.files:
+            return None
+        index = self.tree.index(items[0])
+        return self.files[index] if index < len(self.files) else None
+
+    def _view(self) -> None:
+        path = self._selected()
+        if path is None:
+            return
+        if path.suffix.lower() == ".csv":
+            self.app._show_csv(path)
+        elif path.suffix.lower() in self.TEXTO:
+            TextWindow(self.app, path)
+        else:
+            # tokens.dat esta cifrado: no hay nada legible que enseñar.
+            self.app._open_path(path, path.name)
+
+    def _save_copy(self) -> None:
+        """Saca una copia a donde tu si llegues (Escritorio, Documentos...)."""
+        path = self._selected()
+        if path is None:
+            return
+        destination = filedialog.asksaveasfilename(
+            parent=self, title="Guardar una copia", initialfile=path.name,
+            defaultextension=path.suffix)
+        if not destination:
+            return
+        try:
+            shutil.copyfile(path, destination)
+        except OSError as exc:
+            messagebox.showerror("No se pudo copiar", f"{destination}\n\n{exc}",
+                                 parent=self)
+            return
+        self.app._append(f"Copia guardada en {destination}", "ok")
+        messagebox.showinfo("Copia guardada", destination, parent=self)
+
+
+class TextWindow(tk.Toplevel):
+    """Visor de solo lectura para los registros y la configuracion."""
+
+    MAX_BYTES = 400_000
+
+    def __init__(self, app: "App", path: Path) -> None:
+        super().__init__(app)
+        self.title(path.name)
+        self.geometry("820x560")
+        self.configure(bg=BG)
+
+        try:
+            raw = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            raw = f"No se pudo leer el fichero:\n{exc}"
+        aviso = ""
+        if len(raw) > self.MAX_BYTES:
+            # Un registro puede llegar a 2 MB: interesa el final, no el principio.
+            raw = raw[-self.MAX_BYTES:]
+            aviso = "(fichero largo: se muestra solo el final)\n\n"
+
+        frame = ttk.Frame(self, padding=14)
+        frame.pack(fill="both", expand=True)
+        text = tk.Text(frame, bg="#0e0f16", fg="#cfd0dd", bd=0, wrap="word",
+                       font=("Consolas", 9), padx=10, pady=8, insertbackground=FG)
+        scroll = ttk.Scrollbar(frame, command=text.yview)
+        text.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="right", fill="y")
+        text.pack(side="left", fill="both", expand=True)
+        text.insert("1.0", aviso + raw)
+        text.see("end")
+        text.configure(state="disabled")
+
+        ttk.Button(self, text="Cerrar", command=self.destroy).pack(pady=(0, 12))
+        self.transient(app)
+        self.bind("<Escape>", lambda _e: self.destroy())
+
+
+def _human_size(size: int) -> str:
+    for unit in ("B", "KB", "MB"):
+        if size < 1024 or unit == "MB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024.0
+    return f"{size:.1f} MB"
+
+
+class ReportWindow(tk.Toplevel):
+    """Tabla con el informe de canciones que no se pudieron enlazar."""
+
+    def __init__(self, master: "App", path: Path, rows: list[list[str]]) -> None:
+        super().__init__(master)
+        self.title(f"Sin equivalencia - {path.name}")
+        self.geometry("820x560")
+        self.minsize(560, 360)
+        self.configure(bg=BG)
+        self.path = path
+
+        header, data = _split_report(rows)
+
+        top = ttk.Frame(self, padding=(14, 12, 14, 6))
+        top.pack(fill="x")
+        ttk.Label(top, text=f"{len(data)} canciones sin equivalencia",
+                  style="Title.TLabel").pack(anchor="w")
+        tk.Label(top, text=str(path), bg=BG, fg=MUTED, font=("Segoe UI", 8),
+                 anchor="w").pack(anchor="w", pady=(2, 0))
+
+        table = ttk.Frame(self, padding=(14, 0))
+        table.pack(fill="both", expand=True)
+        self.tree = ttk.Treeview(table, columns=header, show="headings",
+                                 selectmode="extended")
+        for i, name in enumerate(header):
+            self.tree.heading(name, text=name.capitalize())
+            # La primera columna es el destino: corta. La cancion se lleva el resto.
+            self.tree.column(name, width=180 if i == 0 else 560,
+                             stretch=i > 0, anchor="w")
+        scroll = ttk.Scrollbar(table, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="right", fill="y")
+        self.tree.pack(side="left", fill="both", expand=True)
+
+        for row in data:
+            self.tree.insert("", "end", values=_pad(row, len(header)))
+        if not data:
+            self.tree.insert("", "end", values=_pad(["(vacio)"], len(header)))
+
+        row = ttk.Frame(self, padding=14)
+        row.pack(fill="x")
+        ttk.Button(row, text="Copiar seleccion",
+                   command=self._copy).pack(side="left")
+        ttk.Button(row, text="Abrir en Excel",
+                   command=lambda: master._open_path(path, "el informe")).pack(
+            side="left", padx=(8, 0))
+        ttk.Button(row, text="Cerrar", command=self.destroy).pack(side="right")
+
+        self.transient(master)
+        self.bind("<Escape>", lambda _e: self.destroy())
+
+    def _copy(self) -> None:
+        """Al portapapeles, para pegarlo en una lista de la compra o un correo."""
+        chosen = self.tree.selection() or self.tree.get_children()
+        lines = ["\t".join(str(v) for v in self.tree.item(item, "values"))
+                 for item in chosen]
+        self.clipboard_clear()
+        self.clipboard_append("\n".join(lines))
+
+
+def _split_report(rows: list[list[str]]) -> tuple[list[str], list[list[str]]]:
+    """Separa la cabecera del CSV de sus filas, tolerando un fichero vacio."""
+    if not rows:
+        return ["destino", "cancion"], []
+    return rows[0], rows[1:]
+
+
+def _pad(row: list[str], size: int) -> list[str]:
+    return (row + [""] * size)[:size]
 
 
 _DIRECTIONS = {

@@ -65,10 +65,39 @@ def run_sync(itunes_only: bool = False, playlist: str | None = None) -> int:
         handle.close()
 
 
+def _process_user() -> str:
+    """Con que cuenta corre esto: si no es la de tu sesion, el Explorador no
+    podra abrir la carpeta de datos aunque Python si escriba en ella."""
+    import ctypes
+    import getpass
+    try:
+        elevado = bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:  # noqa: BLE001
+        elevado = False
+    return f"{getpass.getuser()}{' (como administrador)' if elevado else ''}"
+
+
+def _data_dir_state() -> str:
+    """Comprueba de verdad la carpeta de datos: %APPDATA% cambia con el usuario."""
+    folder = app_dir()
+    probe = folder / ".prueba-escritura"
+    try:
+        probe.write_text("", encoding="utf-8")
+        probe.unlink()
+    except OSError as exc:
+        return f"NO SE PUEDE ESCRIBIR: {exc}"
+    reports = folder / "reports"
+    informes = (len(list(reports.glob("sin-equivalencia-*.csv")))
+                if reports.is_dir() else 0)
+    return f"correcta, {informes} informe{'s' if informes != 1 else ''}"
+
+
 def show_status() -> int:
     cfg, tokens, state = Config.load(), TokenStore(), StateStore()
     names = state.data.get("names", {})
+    print(f"Usuario          : {_process_user()}")
     print(f"Carpeta de datos : {app_dir()}")
+    print(f"                   {_data_dir_state()}")
     print(f"Spotify          : "
           f"{'conectado ' + names.get('spotify', '') if tokens.has('spotify') else 'SIN CONECTAR'}")
     print(f"TIDAL            : "

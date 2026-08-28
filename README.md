@@ -100,8 +100,9 @@ lo que ya se sabe que no está.
 | **Modo simulación** | Lee todo y muestra el plan, pero no escribe nada en tus cuentas. |
 | **País** | Código ISO de 2 letras para el catálogo de TIDAL (`ES`, `MX`, `US`…). |
 
-Los filtros `playlist_include` y `playlist_exclude` se editan en el `config.json`
-(botón *Abrir carpeta de datos*).
+Los filtros `playlist_include` y `playlist_exclude` se editan en el `config.json`.
+El botón *Abrir carpeta de datos* lista los ficheros de la aplicación y deja verlos
+o sacar una copia sin salir de la ventana.
 
 ---
 
@@ -136,6 +137,13 @@ sin `feat.`, y con las comas y los puntos y coma tratados igual—, de modo que
 `ROSALÍA, The Weeknd` encuentra a la de `ROSALÍA; The Weeknd`. Si varias canciones
 comparten título, desempata por duración; si el artista no encaja, **no la añade**.
 
+**Qué te falta:** el botón *Ver que falta en iTunes* abre el informe del día en
+una tabla dentro de la propia aplicación, con un botón para copiar lo que marques
+y otro para abrirlo en Excel. La columna *destino* dice de qué playlist venía cada
+canción: `itunes / Rock`, `itunes / Zumba`… El mismo botón está como *Ver informe*
+en la pestaña Sincronización, donde además salen las canciones que no tienen
+equivalencia entre Spotify y TIDAL.
+
 El *Modo simulación* también vale aquí: enseña qué playlists crearía y cuántas
 canciones añadiría sin tocar iTunes.
 
@@ -165,7 +173,7 @@ O los lanzadores: `sincronizar-ahora.bat`, `estado.bat` y
 | `tokens.dat` | Tokens **cifrados con DPAPI**: solo los descifra tu usuario de Windows en este equipo. No están en texto plano ni salen de tu máquina. |
 | `state.json` | Snapshots para detectar borrados y caché de equivalencias. |
 | `logs\sync.log` | Registro de cada ejecución (rota a los 2 MB). |
-| `reports\` | CSV de canciones sin equivalencia. |
+| `reports\` | CSV de canciones sin equivalencia, uno por día. El botón **Ver informe** muestra el más reciente en una tabla dentro de la aplicación. |
 
 Si borras `state.json`, la siguiente sincronización vuelve a partir de cero: es
 inocua (solo une), pero perderá la referencia para propagar borrados.
@@ -213,6 +221,36 @@ en la app y vuelve a conectar para que el token se emita con los permisos nuevos
 **Muchas canciones sin equivalencia** — normal en discos poco comunes o ediciones
 regionales: si el catálogo del otro servicio no tiene esa grabación, no hay nada
 que enlazar. Comprueba también que el código de país sea el tuyo.
+
+**«Ubicación no disponible» al pulsar *Abrir carpeta de datos*, pero `estado.bat`
+dice que la carpeta es correcta** — las dos cosas pueden ser ciertas a la vez. La
+ruta sale de `%APPDATA%`, que cambia según la cuenta de Windows: si la aplicación
+corre con una cuenta (por ejemplo elevada como administrador) y el Explorador con
+otra, Python escribe ahí sin problema pero el Explorador no puede entrar.
+
+Compara las dos primeras líneas de `estado.bat`:
+
+```
+Usuario          : admin-cheny (como administrador)
+Carpeta de datos : C:\Users\admin-cheny\AppData\Roaming\SpotifyTidalSync
+                   correcta, 1 informe
+```
+
+Si ese usuario no es con el que has iniciado sesión, **el Explorador no va a poder
+abrir esa carpeta y no hay nada que la aplicación pueda hacer al respecto**. Por eso
+los dos botones enseñan el contenido por su cuenta:
+
+- **Ver informe** abre el CSV en una tabla dentro de la aplicación.
+- **Abrir carpeta de datos** lista los ficheros (configuración, registros,
+  informes) con su tamaño y su fecha. Desde ahí puedes **Ver** cualquiera —los CSV
+  como tabla, los registros como texto— o **Guardar copia…** para sacarlo a tu
+  Escritorio o a Documentos, donde sí llegas con el Explorador.
+
+`tokens.dat` aparece en la lista pero no se puede leer: está cifrado con DPAPI.
+
+**No aparece ningún informe** — es lo normal hasta que una sincronización deje
+alguna canción sin equivalencia; solo entonces se crea `reports\`. `estado.bat`
+te dice cuántos informes hay.
 
 **«Falta el paquete pywin32»** — ejecuta `instalar.bat` otra vez en ese equipo.
 
