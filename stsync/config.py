@@ -43,6 +43,10 @@ DEFAULTS: dict[str, Any] = {
     "flac_after_sync": False,         # convertir al terminar la sincronizacion
     "flac_schedule_time": "04:00",    # o repaso propio, una hora despues
 
+    # --- Actualizaciones (para repartir la app entre conocidos) ---
+    "github_repo": "",              # usuario/proyecto de GitHub
+    "update_check": True,           # mirar si hay version nueva al abrir
+
     # --- Comportamiento ---
     "country_code": "ES",            # ISO 3166-1 alpha-2, para el catalogo de TIDAL
     "dry_run": False,                # simula: no escribe nada en las cuentas

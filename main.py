@@ -6,6 +6,8 @@
   python main.py --flac2alac -> convierte a ALAC los FLAC de la carpeta de iTunes
   python main.py --itunes --playlist "Mi lista"  -> solo esa playlist
   python main.py --buscar "hay que venir"  -> por que no casa esa cancion
+  python main.py --version  -> version instalada y si hay una mas nueva
+  python main.py --actualizar -> se baja la ultima release de GitHub
   python main.py --status   -> muestra el estado actual
   python main.py --schedule 03:00 / --unschedule
   python main.py --schedule-flac 04:00 / --unschedule-flac
@@ -25,6 +27,7 @@ from stsync.oauth import OAuthError
 from stsync.paths import app_dir, log_file
 from stsync.store import StateStore, TokenStore
 from stsync.sync import SyncEngine
+from stsync.updates import UpdateError, apply_release, check, current_version
 
 MAX_LOG_BYTES = 2 * 1024 * 1024
 
@@ -128,9 +131,40 @@ def run_inspect(query: str) -> int:
         return 1
 
 
+def run_update(aplicar: bool) -> int:
+    """Mira si hay version nueva en GitHub y, si se pide, la instala."""
+    cfg = Config.load()
+    print(f"Version instalada : {current_version()}")
+    repo = str(cfg.get("github_repo", ""))
+    try:
+        hay, release = check(repo)
+    except UpdateError as exc:
+        print(f"ERROR: {exc}")
+        return 1
+
+    print(f"Ultima publicada  : {release.version}")
+    if not hay:
+        print("Ya tienes la ultima version.")
+        return 0
+    if not aplicar:
+        print("Hay una version nueva. Para instalarla:")
+        print("   actualizar.bat   (o python main.py --actualizar)")
+        return 0
+
+    try:
+        apply_release(release, print)
+    except UpdateError as exc:
+        print(f"ERROR: {exc}")
+        print("No se ha tocado nada: sigues con la version de antes.")
+        return 1
+    print(f"Actualizado a {release.version}. Cierra y vuelve a abrir la aplicacion.")
+    return 0
+
+
 def show_status() -> int:
     cfg, tokens, state = Config.load(), TokenStore(), StateStore()
     names = state.data.get("names", {})
+    print(f"Version          : {current_version()}")
     print(f"Usuario          : {_process_user()}")
     print(f"Carpeta de datos : {app_dir()}")
     print(f"                   {_data_dir_state()}")
@@ -175,6 +209,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="convierte a ALAC los FLAC de la carpeta de iTunes")
     parser.add_argument("--buscar", metavar="TEXTO",
                         help="ensena como ve esa cancion en iTunes y en TIDAL")
+    parser.add_argument("--version", action="store_true",
+                        help="version instalada y si hay una mas nueva")
+    parser.add_argument("--actualizar", action="store_true",
+                        help="instala la ultima release de GitHub")
     parser.add_argument("--status", action="store_true",
                         help="muestra el estado y sale")
     parser.add_argument("--schedule", metavar="HH:MM",
@@ -194,6 +232,8 @@ def main(argv: list[str] | None = None) -> int:
         cfg.set("dry_run", True)
         cfg.save()
 
+    if args.version or args.actualizar:
+        return run_update(aplicar=args.actualizar)
     if args.buscar:
         return run_inspect(args.buscar)
     if args.status:
