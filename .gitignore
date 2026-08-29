@@ -8,3 +8,4 @@ state.json
 # restos que dejan las pruebas
 tests/ultimo-comando.txt
 tests/prueba-flac/
+tests/prueba-updates/

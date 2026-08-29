@@ -11,6 +11,7 @@ equipo de desarrollo pelado.
 | `test_tidal.py` | El parseo de la API: nombres de artista incluidos, el formato antiguo y el reintento si TIDAL rechaza el `include`. |
 | `test_convertir.py` | El conversor FLAC → ALAC con un ffmpeg de mentira: nombres que chocan, calidad CD, borrar o mover el original, y que un fallo no deje restos. |
 | `test_buscar.py` | La salida de `--buscar`, que es lo que se mira cuando algo no casa. |
+| `test_actualizar.py` | La actualizacion desde GitHub: comparar versiones, los errores de la API, y que una descarga que no vale no toque la instalacion. |
 | `test_borrar.py` | Que el borrado en una playlist de TIDAL mande el `meta` de cada entrada, sin el cual la API responde 400. |
 
 ## `test_tareas.py` va aparte
