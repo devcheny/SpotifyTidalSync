@@ -1,0 +1,60 @@
+# Publica una release cada vez que sube el numero de version.
+#
+# No hay que tocar nada en la web de GitHub: se cambia __version__ en
+# stsync/__init__.py, se hace push a main y esto crea la etiqueta y la release
+# con sus notas. Si la version no ha cambiado, no hace nada.
+name: Publicar version
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:        # tambien a mano, desde la pestana Actions
+
+permissions:
+  contents: write           # hace falta para crear la etiqueta y la release
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # para que las notas puedan mirar los commits
+
+      - name: Leer la version del codigo
+        id: version
+        run: |
+          numero=$(grep -oP '__version__\s*=\s*"\K[^"]+' stsync/__init__.py)
+          if [ -z "$numero" ]; then
+            echo "No se ha encontrado __version__ en stsync/__init__.py"
+            exit 1
+          fi
+          echo "numero=$numero" >> "$GITHUB_OUTPUT"
+          echo "etiqueta=v$numero" >> "$GITHUB_OUTPUT"
+          echo "Version en el codigo: $numero"
+
+      - name: Mirar si esa version ya esta publicada
+        id: estado
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "v${{ steps.version.outputs.numero }}" >/dev/null 2>&1; then
+            echo "publicar=no" >> "$GITHUB_OUTPUT"
+            echo "La v${{ steps.version.outputs.numero }} ya existe: nada que hacer."
+          else
+            echo "publicar=si" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Comprobar que todo compila
+        if: steps.estado.outputs.publicar == 'si'
+        run: python -m compileall -q main.py stsync
+
+      - name: Publicar la release
+        if: steps.estado.outputs.publicar == 'si'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${{ steps.version.outputs.numero }}" \
+            --title "Version ${{ steps.version.outputs.numero }}" \
+            --generate-notes
+          echo "Publicada la v${{ steps.version.outputs.numero }}."

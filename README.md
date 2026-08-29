@@ -349,18 +349,31 @@ Si alguien quiere apuntar a otro sitio (un *fork* suyo, por ejemplo), lo cambia 
 
 ### Lo que haces tú para publicar una versión
 
-1. Subes el número en `stsync/__init__.py`:
-   ```python
-   __version__ = "1.1.0"
-   ```
-2. Commit y `git push`.
-3. En GitHub, *Releases* → *Draft a new release* → etiqueta **`v1.1.0`** (la `v`
-   es opcional) → *Publish release*.
+Doble clic en **`publicar.bat`**. Sube el número, hace el commit y el push; la
+release la crea GitHub sola:
 
-Eso es todo: la aplicación compara su versión con la etiqueta de la última release
-y se descarga su ZIP. Si publicas una release con una etiqueta **menor o igual** a
-la instalada, nadie se actualiza — así puedes retirar una versión mala publicando
-otra con número mayor.
+```
+publicar.bat            arreglos        1.1.0 -> 1.1.1
+publicar.bat menor      cosas nuevas    1.1.0 -> 1.2.0
+publicar.bat mayor      cambios gordos  1.1.0 -> 2.0.0
+publicar.bat 1.5.2      ese número exacto
+```
+
+Te enseña qué va a hacer y pide confirmación antes de tocar nada.
+
+Por debajo lo publica [`.github/workflows/publicar.yml`](.github/workflows/publicar.yml):
+cuando llega un push a `main`, lee `__version__`, comprueba que esa versión no
+esté ya publicada, verifica que todo compila y crea la etiqueta y la release con
+sus notas. Si la versión no ha cambiado no hace nada, así que puedes hacer todos
+los push que quieras sin publicar de más.
+
+Lo puedes seguir en la pestaña **Actions** del repositorio. Y si algún día
+prefieres hacerlo a mano, sigue valiendo: cambias `__version__`, push, y creas la
+release con la etiqueta `v1.1.0`.
+
+La aplicación compara su versión con la etiqueta de la última release. Si publicas
+una **menor o igual** a la instalada, nadie se actualiza — para retirar una versión
+mala, publica otra con número mayor.
 
 ### Qué se conserva y qué no
 
