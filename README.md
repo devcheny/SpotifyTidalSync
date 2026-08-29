@@ -283,6 +283,8 @@ python main.py --itunes         solo vuelca las playlists de TIDAL en iTunes
 python main.py --itunes --playlist "La Caseta"   solo esa playlist
 python main.py --flac2alac      convierte los FLAC de la carpeta de iTunes a ALAC
 python main.py --buscar "hay que venir"   por que esa cancion no casa con iTunes
+python main.py --version        version instalada y si hay una mas nueva
+python main.py --actualizar     instala la ultima release de GitHub
 python main.py --status         estado de cuentas, ajustes y tarea programada
 python main.py --dry-run --sync simulación
 python main.py --schedule 03:00 registra la tarea diaria
@@ -290,7 +292,7 @@ python main.py --unschedule     la elimina
 ```
 
 O los lanzadores: `sincronizar-ahora.bat`, `estado.bat`, `convertir-flac.bat`,
-`buscar-cancion.bat` y `sincronizar-itunes.bat` (estos dos aceptan el texto o el
+`buscar-cancion.bat`, `actualizar.bat` y `sincronizar-itunes.bat` (estos dos aceptan el texto o el
 nombre de la playlist como argumento; si no se lo das, te lo preguntan).
 
 ## Dónde vive todo
@@ -322,6 +324,59 @@ Se registran en el contexto de tu usuario, **sin permisos de administrador**. Us
 el equipo estaba apagado a la hora prevista, se ejecutan al arrancar. Puedes verlas
 en *Programador de tareas* → *Biblioteca*, y `estado.bat` te dice de las dos cuándo
 corrieron por última vez y cuándo toca la siguiente.
+
+## Repartirla entre amigos, con actualizaciones desde GitHub
+
+Cada uno instala **Python** una vez; a partir de ahí la aplicación se actualiza
+sola desde las *releases* de tu repositorio. No hace falta git ni empaquetar nada.
+
+### Lo que hacen ellos, una vez
+
+1. Instalan Python desde [python.org](https://www.python.org/downloads/), marcando
+   *Add Python to PATH*.
+2. Descargan el proyecto (botón verde *Code* → *Download ZIP*) y lo descomprimen
+   donde quieran.
+3. Doble clic en `instalar.bat`.
+4. Pestaña **Ajustes** → en *Actualizaciones*, escriben tu `usuario/proyecto` →
+   **Guardar ajustes**.
+
+A partir de ahí, cada vez que abran la aplicación les avisará si has publicado algo
+nuevo, y con el botón **Instalar** se pone al día sola. También vale
+`actualizar.bat`.
+
+### Lo que haces tú para publicar una versión
+
+1. Subes el número en `stsync/__init__.py`:
+   ```python
+   __version__ = "1.1.0"
+   ```
+2. Commit y `git push`.
+3. En GitHub, *Releases* → *Draft a new release* → etiqueta **`v1.1.0`** (la `v`
+   es opcional) → *Publish release*.
+
+Eso es todo: la aplicación compara su versión con la etiqueta de la última release
+y se descarga su ZIP. Si publicas una release con una etiqueta **menor o igual** a
+la instalada, nadie se actualiza — así puedes retirar una versión mala publicando
+otra con número mayor.
+
+### Qué se conserva y qué no
+
+Al actualizar se reemplazan los ficheros del programa. **No se toca**:
+
+- La carpeta `.venv`.
+- Nada de `%APPDATA%\SpotifyTidalSync`: cuentas, ajustes, informes y registros.
+
+Si la descarga se corta, el ZIP viene mal o el `main.py` que trae no compila, **no
+se escribe nada** y sigues con la versión que tenías. Tras copiar, se revisa
+`requirements.txt` por si la versión nueva necesita algún paquete más.
+
+### Antes de repartirla: los Client ID
+
+Los de Spotify y TIDAL son **tuyos**. Si van dentro de la aplicación, tus amigos
+gastan tu cuota, y en Spotify tendrías que dar de alta a cada uno en *User
+Management* (las apps en modo desarrollo solo funcionan con las cuentas de esa
+lista, y caben 25). Lo limpio es que **cada uno cree las suyas**, que es gratis y
+son cinco minutos: ver *Crear tus apps de desarrollador*, más arriba.
 
 ## Copiar el proyecto a otro equipo o a una máquina virtual
 
