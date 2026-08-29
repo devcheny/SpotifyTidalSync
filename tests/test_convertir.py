@@ -1,4 +1,5 @@
 """Prueba del convertidor FLAC -> ALAC con un ffmpeg simulado."""
+import json
 import os
 import shutil
 import sys
@@ -117,6 +118,63 @@ for nombre, cfg in (("sin ffmpeg", config(folder, ffmpeg_path=str(AQUI / "no-exi
         raise SystemExit(f"ERROR: {nombre} deberia haber fallado")
     except ConvertError as exc:
         print(f"{nombre}: {exc}")
+
+# --- 7. Completar las etiquetas que le falten al FLAC -----------------------
+def convertir_uno(nombre_fichero, tags=None, **ajustes):
+    """Convierte un solo FLAC y devuelve los argumentos que recibio ffmpeg."""
+    if RAIZ.exists():
+        shutil.rmtree(RAIZ)
+    carpeta = RAIZ / "Anadir automaticamente a iTunes"
+    carpeta.mkdir(parents=True)
+    (carpeta / nombre_fichero).write_bytes(b"flac")
+
+    anterior = os.environ.get("TAGS_FALSOS")
+    if tags is None:
+        os.environ.pop("TAGS_FALSOS", None)
+    else:
+        os.environ["TAGS_FALSOS"] = json.dumps(tags)
+    try:
+        FlacConverter(config(carpeta, **ajustes), lambda m: None).run()
+    finally:
+        os.environ.pop("TAGS_FALSOS", None)
+        if anterior is not None:
+            os.environ["TAGS_FALSOS"] = anterior
+    return (AQUI / "ultimo-comando.txt").read_text(encoding="utf-8").splitlines()
+
+
+def metadatos(args):
+    return dict(a.split("=", 1) for i, a in enumerate(args)
+                if i and args[i - 1] == "-metadata")
+
+
+print("===== etiquetas que faltan =====")
+args = convertir_uno("Xiyo - Do You Remember.flac")
+puestas = metadatos(args)
+print("  sin ninguna etiqueta   ->", puestas)
+assert puestas == {"artist": "Xiyo", "title": "Do You Remember"}, puestas
+
+args = convertir_uno("Xiyo - Do You Remember.flac",
+                     tags={"ARTIST": "Xiyo", "TITLE": "Do You Remember"})
+print("  con las suyas          ->", metadatos(args), "(no se toca lo que ya trae)")
+assert metadatos(args) == {}, metadatos(args)
+
+args = convertir_uno("Xiyo - Do You Remember.flac", tags={"ARTIST": "Otro Nombre"})
+print("  solo le falta el titulo->", metadatos(args))
+assert metadatos(args) == {"title": "Do You Remember"}, metadatos(args)
+
+args = convertir_uno("03 - Xiyo - Do You Remember.flac")
+print("  con numero de pista    ->", metadatos(args))
+assert metadatos(args) == {"artist": "Xiyo", "title": "Do You Remember",
+                           "track": "3"}, metadatos(args)
+
+args = convertir_uno("99 Luftballons.flac")
+print("  titulo que empieza por numero ->", metadatos(args))
+assert metadatos(args) == {"title": "99 Luftballons"}, metadatos(args)
+
+args = convertir_uno("Xiyo - Do You Remember.flac", flac_complete_tags=False)
+print("  con el ajuste apagado  ->", metadatos(args))
+assert metadatos(args) == {}, metadatos(args)
+print()
 
 shutil.rmtree(RAIZ)
 print()

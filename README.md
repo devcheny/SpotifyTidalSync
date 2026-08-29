@@ -239,6 +239,7 @@ la pestaña. Arriba te dice en verde o en rojo si está listo.
 | **Convertir al terminar la sincronización** | Igual que la opción de iTunes: se encadena como **último paso de la cola**, después del volcado de playlists, y entra en la tarea diaria de las 24 h sin registrar nada nuevo. |
 | **Calidad CD** | Deja el ALAC en 16 bits y 44,1 kHz, los **1411 kbps** de un CD. Sin esto, un FLAC de 24 bits y 192 kHz sale a **9216 kbps** y ocupa unas seis veces más, porque ALAC no pierde información: se lleva la resolución del original tal cual. Activado por defecto. |
 | **Normalizar el volumen** | `loudnorm=I=-9:TP=-1.5:LRA=11`, lo mismo que hacía el `flac2alac.bat` de siempre. |
+| **Completar lo que falte** | Un FLAC sin etiquetas entra en iTunes como *Artista desconocido* y ya no hay quien lo empareje. Como esos ficheros suelen llamarse `Artista - Titulo.flac`, de ahí salen el artista, el título y el número de pista **que el fichero no traiga**. Lo que ya trae manda siempre. |
 | **Conservar la carátula** | Copia la portada al `.m4a`. Si ffmpeg la rechaza, reintenta sin ella en vez de dar el fichero por perdido. |
 | **Borrar el FLAC** | Al convertirlo bien. Si lo desmarcas, el original se mueve a `_convertidos\` en vez de borrarse. En ambos casos deja de reconvertirse la próxima vez. |
 

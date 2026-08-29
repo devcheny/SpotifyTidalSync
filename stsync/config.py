@@ -37,6 +37,7 @@ DEFAULTS: dict[str, Any] = {
                    "A\u00f1adir autom\u00e1ticamente a iTunes",
     "flac_cd_quality": True,          # 16 bits / 44,1 kHz: 1411 kbps en vez de 9216
     "flac_normalize": True,           # loudnorm, como el flac2alac.bat de siempre
+    "flac_complete_tags": True,       # rellenar artista/titulo que falten
     "flac_keep_artwork": True,        # copiar la caratula al .m4a si la trae
     "flac_delete_source": True,       # borrar el FLAC tras convertirlo bien
     "ffmpeg_path": "",                # vacio = buscarlo en el PATH

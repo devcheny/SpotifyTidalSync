@@ -13,7 +13,9 @@ la caratula si el fichero la trae.
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -189,6 +191,8 @@ class FlacConverter:
                         "-disposition:v", "attached_pic"]
         else:
             command += ["-vn"]
+        for campo, valor in self._tags_que_faltan(ffmpeg, source).items():
+            command += ["-metadata", f"{campo}={valor}"]
         command += ["-c:a", "alac"]
         if self.cfg.get("flac_cd_quality", True):
             # Un FLAC de 24 bits y 192 kHz sale a 9216 kbps y ocupa una
@@ -204,6 +208,34 @@ class FlacConverter:
                                   timeout=TIMEOUT_S, creationflags=NO_WINDOW)
         except subprocess.TimeoutExpired:
             return subprocess.CompletedProcess(command, 1, "", "ffmpeg tardo demasiado")
+
+    def _tags_que_faltan(self, ffmpeg: str, source: Path) -> dict[str, str]:
+        """Lo que el FLAC no trae y se puede deducir de su nombre.
+
+        Un FLAC sin etiquetas entra en iTunes como "Artista desconocido" y ya
+        no hay quien lo empareje con nada. Como esos ficheros suelen llamarse
+        "Artista - Titulo", de ahi sale lo justo para que quede identificado.
+
+        Solo se rellenan los huecos: lo que el fichero ya trae manda siempre.
+        """
+        if not self.cfg.get("flac_complete_tags", True):
+            return {}
+        ffprobe = _buscar_ffprobe(ffmpeg)
+        if not ffprobe:
+            return {}          # sin ffprobe no se sabe que falta: mejor no tocar
+
+        tiene = _leer_tags(ffprobe, source)
+        artista, titulo, pista = _partir_nombre(source.stem)
+        faltan: dict[str, str] = {}
+        if artista and not tiene.get("artist"):
+            faltan["artist"] = artista
+        if titulo and not tiene.get("title"):
+            faltan["title"] = titulo
+        if pista and not tiene.get("track"):
+            faltan["track"] = pista
+        if faltan:
+            self.log(f"      completando: {', '.join(sorted(faltan))}")
+        return faltan
 
     def _retire(self, source: Path, folder: Path) -> None:
         """El original ya sobra: si se queda, la proxima vez se duplicaria."""
@@ -236,6 +268,52 @@ class FlacConverter:
                 self.stats.cleaned_dirs += 1
             except OSError:
                 pass
+
+
+def _buscar_ffprobe(ffmpeg: str) -> str | None:
+    """ffprobe vive al lado de ffmpeg y se llama igual cambiando el nombre."""
+    hermano = Path(ffmpeg).with_name(Path(ffmpeg).name.replace("ffmpeg", "ffprobe"))
+    if hermano.is_file():
+        return str(hermano)
+    return shutil.which("ffprobe")
+
+
+def _leer_tags(ffprobe: str, source: Path) -> dict[str, str]:
+    """Etiquetas que ya trae el fichero, en minusculas y sin vacias."""
+    orden = [ffprobe, "-v", "quiet", "-print_format", "json", "-show_format",
+             str(source)]
+    try:
+        salida = subprocess.run(orden, capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=60,
+                                creationflags=NO_WINDOW)
+        datos = json.loads(salida.stdout or "{}")
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return {}
+    etiquetas = (datos.get("format") or {}).get("tags") or {}
+    return {str(k).lower(): str(v).strip()
+            for k, v in etiquetas.items() if str(v).strip()}
+
+
+_SEPARADOR = re.compile(r"\s+-\s+")
+_PISTA = re.compile(r"^\s*(\d{1,2})\s*(?:[-._)]\s*|\s+)")
+
+
+def _partir_nombre(stem: str) -> tuple[str, str, str]:
+    """De "01 - Xiyo - Do You Remember" saca artista, titulo y numero de pista."""
+    texto, pista = stem.strip(), ""
+    principio = _PISTA.match(texto)
+    if principio:
+        resto = texto[principio.end():]
+        # El numero solo cuenta como pista si lleva separador ("01 - X") o si
+        # lo que queda tiene forma de "Artista - Titulo". Sin eso podria ser
+        # parte del nombre, como en "99 Luftballons".
+        if principio.group(0).strip()[-1] in "-._)" or _SEPARADOR.search(resto):
+            pista, texto = str(int(principio.group(1))), resto
+
+    partes = _SEPARADOR.split(texto, maxsplit=1)
+    if len(partes) == 2 and partes[0].strip() and partes[1].strip():
+        return partes[0].strip(), partes[1].strip(), pista
+    return "", texto.strip(), pista
 
 
 def _size_change(source: Path, target: Path) -> str:

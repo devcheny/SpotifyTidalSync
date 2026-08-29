@@ -506,6 +506,9 @@ class App(tk.Tk):
              "24/192 sale a 9216 kbps y ocupa 6 veces mas"),
             ("flac_normalize",
              "Normalizar el volumen (loudnorm, como el flac2alac.bat de siempre)"),
+            ("flac_complete_tags",
+             "Completar el artista y el titulo que falten, sacandolos del "
+             "nombre del fichero ('Artista - Titulo.flac')"),
             ("flac_keep_artwork", "Conservar la caratula si el FLAC la trae"),
             ("flac_delete_source",
              f"Borrar el FLAC al convertirlo (si no, se mueve a '{DONE_DIR}')"),
