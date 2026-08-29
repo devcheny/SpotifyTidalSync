@@ -25,7 +25,7 @@ from .tidal import TidalClient
 DURATION_TOLERANCE_S = 7.0
 
 # Cada lectura de un campo cruza la frontera COM: avisamos de vez en cuando.
-INDEX_PROGRESS_EVERY = 2000
+INDEX_PROGRESS_EVERY = 1000
 
 
 class ITunesError(RuntimeError):
