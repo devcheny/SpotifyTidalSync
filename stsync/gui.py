@@ -154,6 +154,10 @@ class App(tk.Tk):
         self.sync_button = ttk.Button(row, text="Sincronizar ahora",
                                       style="Accent.TButton", command=self._start_sync)
         self.sync_button.pack(side="left")
+        self.try_sync_button = ttk.Button(
+            row, text="Probar sin tocar nada",
+            command=lambda: self._start_sync(simular=True))
+        self.try_sync_button.pack(side="left", padx=(8, 0))
         self.stop_button = ttk.Button(row, text="Detener", command=self._stop_sync,
                                       state="disabled")
         self.stop_button.pack(side="left", padx=(8, 0))
@@ -265,9 +269,17 @@ class App(tk.Tk):
                                         style="Accent.TButton",
                                         command=self._start_itunes)
         self.itunes_button.pack(side="left")
+        self.try_itunes_button = ttk.Button(
+            row, text="Probar", width=8,
+            command=lambda: self._start_itunes(simular=True))
+        self.try_itunes_button.pack(side="left", padx=(8, 0))
         self.fix_button = ttk.Button(row, text="Completar datos",
                                      command=self._start_fix_artists)
         self.fix_button.pack(side="left", padx=(8, 0))
+        self.try_fix_button = ttk.Button(
+            row, text="Probar", width=8,
+            command=lambda: self._start_fix_artists(simular=True))
+        self.try_fix_button.pack(side="left", padx=(8, 0))
         ttk.Button(row, text="Guardar ajustes",
                    command=self._save_settings).pack(side="left", padx=(8, 0))
         ttk.Button(row, text="Ver que falta en iTunes",
@@ -523,6 +535,10 @@ class App(tk.Tk):
                                       style="Accent.TButton",
                                       command=self._start_flac)
         self.flac_button.pack(side="left")
+        self.try_flac_button = ttk.Button(
+            row, text="Probar", width=8,
+            command=lambda: self._start_flac(simular=True))
+        self.try_flac_button.pack(side="left", padx=(8, 0))
         ttk.Button(row, text="Guardar ajustes",
                    command=self._save_settings).pack(side="left", padx=(8, 0))
         self._refresh_flac_status()
@@ -571,7 +587,7 @@ class App(tk.Tk):
         if chosen:
             self.vars["ffmpeg_path"].set(os.path.normpath(chosen))
 
-    def _start_flac(self) -> None:
+    def _start_flac(self, simular: bool = False) -> None:
         if self.worker and self.worker.is_alive():
             return
         if not self._save_settings(silent=True):
@@ -580,16 +596,11 @@ class App(tk.Tk):
                 "No se puede continuar porque hay un ajuste no valido.\n\n"
                 + (self._validate_settings() or ""))
             return
-        self.stop_flag.clear()
-        self._set_busy(True)
-        self.stop_button.configure(state="normal")
-        self._append("")
-        self.worker = threading.Thread(target=self._flac_worker, daemon=True)
-        self.worker.start()
+        self._lanzar(self._flac_worker, simular)
 
-    def _flac_worker(self) -> None:
+    def _flac_worker(self, simular: bool = False) -> None:
         try:
-            converter = FlacConverter(Config.load(), self._q_log,
+            converter = FlacConverter(self._config_para(simular), self._q_log,
                                       self.stop_flag.is_set)
             self.queue.put(("ok", converter.run().summary()))
         except ConvertError as exc:
@@ -841,7 +852,7 @@ class App(tk.Tk):
         finally:
             self.queue.put(("done", None))
 
-    def _start_sync(self) -> None:
+    def _start_sync(self, simular: bool = False) -> None:
         if self.worker and self.worker.is_alive():
             return
         if not (self.tokens.has("spotify") and self.tokens.has("tidal")):
@@ -854,16 +865,34 @@ class App(tk.Tk):
                 "No se puede sincronizar porque hay un ajuste no valido.\n\n"
                 + (self._validate_settings() or ""))
             return
+        self._lanzar(self._sync_worker, simular)
+
+    def _lanzar(self, worker, simular: bool) -> None:
+        """Arranca un trabajo en su hilo, en serio o de mentira."""
         self.stop_flag.clear()
         self._set_busy(True)
         self.stop_button.configure(state="normal")
         self._append("")
-        self.worker = threading.Thread(target=self._sync_worker, daemon=True)
+        self.worker = threading.Thread(target=worker, args=(simular,),
+                                       daemon=True)
         self.worker.start()
 
-    def _sync_worker(self) -> None:
+    def _config_para(self, simular: bool) -> Config:
+        """La configuracion de siempre; en simulacion, solo para esta vez.
+
+        No se guarda: asi se puede probar cualquier accion sin tener que ir a
+        Ajustes a marcar la casilla y acordarse luego de desmarcarla.
+        """
+        cfg = Config.load()
+        if simular:
+            cfg.set("dry_run", True)
+            self._append("MODO SIMULACION: no se va a escribir nada.")
+        return cfg
+
+    def _sync_worker(self, simular: bool = False) -> None:
         try:
-            engine = SyncEngine(Config.load(), self._q_log, self.stop_flag.is_set)
+            engine = SyncEngine(self._config_para(simular), self._q_log,
+                                self.stop_flag.is_set)
             stats = engine.run()
             self.queue.put(("ok", stats.summary()))
         except (ApiError, OAuthError) as exc:
@@ -873,7 +902,7 @@ class App(tk.Tk):
         finally:
             self.queue.put(("done", None))
 
-    def _start_itunes(self) -> None:
+    def _start_itunes(self, simular: bool = False) -> None:
         if self.worker and self.worker.is_alive():
             return
         if not self.tokens.has("tidal"):
@@ -886,14 +915,9 @@ class App(tk.Tk):
                 "No se puede continuar porque hay un ajuste no valido.\n\n"
                 + (self._validate_settings() or ""))
             return
-        self.stop_flag.clear()
-        self._set_busy(True)
-        self.stop_button.configure(state="normal")
-        self._append("")
-        self.worker = threading.Thread(target=self._itunes_worker, daemon=True)
-        self.worker.start()
+        self._lanzar(self._itunes_worker, simular)
 
-    def _start_fix_artists(self) -> None:
+    def _start_fix_artists(self, simular: bool = False) -> None:
         """Rellena en iTunes los datos que faltan, con lo que sabe TIDAL."""
         if self.worker and self.worker.is_alive():
             return
@@ -903,25 +927,19 @@ class App(tk.Tk):
             return
         if not self._save_settings(silent=True):
             return
-        if self.cfg.dry_run:
-            self._append("Modo simulacion: solo se dira que cambiaria.")
-        elif not messagebox.askyesno(
+        # Probando no se toca nada, asi que no hay nada que confirmar.
+        if not simular and not self.cfg.dry_run and not messagebox.askyesno(
                 "Completar datos",
                 "Se van a cambiar etiquetas de tu biblioteca de iTunes.\n\n"
                 "Solo se rellena lo que falta: los artistas que no esten (nunca "
                 "se sustituye uno por otro ni se quita ninguno) y el año de las "
                 "canciones que no tengan ninguno.\n\n¿Seguimos?"):
             return
-        self.stop_flag.clear()
-        self._set_busy(True)
-        self.stop_button.configure(state="normal")
-        self._append("")
-        self.worker = threading.Thread(target=self._fix_worker, daemon=True)
-        self.worker.start()
+        self._lanzar(self._fix_worker, simular)
 
-    def _fix_worker(self) -> None:
+    def _fix_worker(self, simular: bool = False) -> None:
         try:
-            cfg = Config.load()
+            cfg = self._config_para(simular)
             stats = complete_tags(
                 cfg, TidalClient(cfg, self.tokens, self._q_log),
                 self._q_log, self.stop_flag.is_set)
@@ -933,9 +951,10 @@ class App(tk.Tk):
         finally:
             self.queue.put(("done", None))
 
-    def _itunes_worker(self) -> None:
+    def _itunes_worker(self, simular: bool = False) -> None:
         try:
-            engine = SyncEngine(Config.load(), self._q_log, self.stop_flag.is_set)
+            engine = SyncEngine(self._config_para(simular), self._q_log,
+                                self.stop_flag.is_set)
             stats = engine.run_itunes()
             self.queue.put(("ok", stats.summary()))
         except (ApiError, OAuthError) as exc:
@@ -1066,6 +1085,9 @@ class App(tk.Tk):
         return _DIRECTIONS.get(code, _DIRECTIONS["both"])
 
     def _set_busy(self, busy: bool) -> None:
+        for boton in (self.try_sync_button, self.try_itunes_button,
+                      self.try_fix_button, self.try_flac_button):
+            boton.configure(state="disabled" if busy else "normal")
         self.sync_button.configure(state="disabled" if busy else "normal")
         self.itunes_button.configure(state="disabled" if busy else "normal")
         self.itunes_load_button.configure(state="disabled" if busy else "normal")
