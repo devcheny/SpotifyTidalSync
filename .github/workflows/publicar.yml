@@ -54,7 +54,24 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # --target con el commit exacto de este push. Sin eso, gh etiqueta la
+          # rama por defecto del repositorio, que puede no ser esta y llevar
+          # otro codigo: la release saldria con una version que no es la suya.
           gh release create "v${{ steps.version.outputs.numero }}" \
+            --target "${{ github.sha }}" \
             --title "Version ${{ steps.version.outputs.numero }}" \
             --generate-notes
           echo "Publicada la v${{ steps.version.outputs.numero }}."
+
+      - name: Comprobar que la etiqueta quedo donde debia
+        if: steps.estado.outputs.publicar == 'si'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          apunta=$(gh api "repos/${{ github.repository }}/git/ref/tags/v${{ steps.version.outputs.numero }}" --jq '.object.sha')
+          if [ "$apunta" != "${{ github.sha }}" ]; then
+            echo "La etiqueta v${{ steps.version.outputs.numero }} ha quedado en $apunta"
+            echo "en vez de en ${{ github.sha }}: llevaria otra version dentro."
+            exit 1
+          fi
+          echo "La etiqueta apunta al commit correcto."
