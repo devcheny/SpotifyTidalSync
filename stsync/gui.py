@@ -18,6 +18,7 @@ from .config import Config
 from .convert import DONE_DIR, ConvertError, FlacConverter
 from .convert import diagnose as flac_diagnose
 from .http import ApiError
+from .itunes import ITunesError, complete_artists
 from .itunes import diagnose as itunes_diagnose
 from .oauth import OAuthError
 from .paths import app_dir, latest_report
@@ -264,6 +265,9 @@ class App(tk.Tk):
                                         style="Accent.TButton",
                                         command=self._start_itunes)
         self.itunes_button.pack(side="left")
+        self.fix_button = ttk.Button(row, text="Completar artistas",
+                                     command=self._start_fix_artists)
+        self.fix_button.pack(side="left", padx=(8, 0))
         ttk.Button(row, text="Guardar ajustes",
                    command=self._save_settings).pack(side="left", padx=(8, 0))
         ttk.Button(row, text="Ver que falta en iTunes",
@@ -889,6 +893,45 @@ class App(tk.Tk):
         self.worker = threading.Thread(target=self._itunes_worker, daemon=True)
         self.worker.start()
 
+    def _start_fix_artists(self) -> None:
+        """Rellena en iTunes los artistas que faltan, con lo que sabe TIDAL."""
+        if self.worker and self.worker.is_alive():
+            return
+        if not self.tokens.has("tidal"):
+            messagebox.showwarning("Falta TIDAL",
+                                   "Conecta TIDAL: de ahi salen los artistas.")
+            return
+        if not self._save_settings(silent=True):
+            return
+        if self.cfg.dry_run:
+            self._append("Modo simulacion: solo se dira que cambiaria.")
+        elif not messagebox.askyesno(
+                "Completar artistas",
+                "Se van a cambiar etiquetas de tu biblioteca de iTunes.\n\n"
+                "Solo se anaden los artistas que falten; nunca se sustituye uno "
+                "por otro ni se quita ninguno.\n\n¿Seguimos?"):
+            return
+        self.stop_flag.clear()
+        self._set_busy(True)
+        self.stop_button.configure(state="normal")
+        self._append("")
+        self.worker = threading.Thread(target=self._fix_worker, daemon=True)
+        self.worker.start()
+
+    def _fix_worker(self) -> None:
+        try:
+            cfg = Config.load()
+            stats = complete_artists(
+                cfg, TidalClient(cfg, self.tokens, self._q_log),
+                self._q_log, self.stop_flag.is_set)
+            self.queue.put(("ok", stats.summary()))
+        except (ITunesError, ApiError, OAuthError) as exc:
+            self.queue.put(("error", str(exc)))
+        except Exception as exc:  # noqa: BLE001
+            self.queue.put(("error", f"Error inesperado: {exc}"))
+        finally:
+            self.queue.put(("done", None))
+
     def _itunes_worker(self) -> None:
         try:
             engine = SyncEngine(Config.load(), self._q_log, self.stop_flag.is_set)
@@ -1025,6 +1068,7 @@ class App(tk.Tk):
         self.sync_button.configure(state="disabled" if busy else "normal")
         self.itunes_button.configure(state="disabled" if busy else "normal")
         self.itunes_load_button.configure(state="disabled" if busy else "normal")
+        self.fix_button.configure(state="disabled" if busy else "normal")
         self.flac_button.configure(state="disabled" if busy else "normal")
         self.update_button.configure(state="disabled" if busy else "normal")
         self.sp_button.configure(state="disabled" if busy else "normal")
