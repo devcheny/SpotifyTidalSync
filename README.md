@@ -424,8 +424,8 @@ otra, Python escribe ahí sin problema pero el Explorador no puede entrar.
 Compara las dos primeras líneas de `estado.bat`:
 
 ```
-Usuario          : admin-cheny (como administrador)
-Carpeta de datos : C:\Users\admin-cheny\AppData\Roaming\SpotifyTidalSync
+Usuario          : mi-usuario (como administrador)
+Carpeta de datos : C:\Users\mi-usuario\AppData\Roaming\SpotifyTidalSync
                    correcta, 1 informe
 ```
 
