@@ -130,6 +130,9 @@ def _llevar_a_main(rama: str) -> None:
             f"   git checkout main && git merge {rama}\n"
             "La version ya esta subida en tu rama: no hace falta volver a subirla.")
     git("checkout", rama)
+    # Tambien la rama de trabajo: dejarla atras en GitHub confunde a quien mire
+    # el repositorio y, si algun dia es la rama por defecto, ensena codigo viejo.
+    git("push", "origin", rama)
     print(f"Llevado a main y empujado; sigues en '{rama}'.")
 
 

@@ -72,8 +72,11 @@ assert falso.resumen == [
     "merge itunes-sync --ff-only",
     "push origin main",
     "checkout itunes-sync",
+    # La rama de trabajo tambien se empuja: si se queda atras en GitHub, una
+    # release etiquetada sobre ella llevaria dentro la version anterior.
+    "push origin itunes-sync",
 ], falso.resumen
-print("   commit en la rama, merge a main, push a main y vuelta. Correcto.")
+print("   commit en la rama, merge a main, push a las dos y vuelta. Correcto.")
 
 # --- 2. desde otra rama, diciendo que no ------------------------------------
 codigo, falso, guardado = correr(["n", "s"])
