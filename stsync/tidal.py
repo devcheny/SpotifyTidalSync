@@ -123,31 +123,39 @@ class TidalClient:
     def _collect(self, path: str) -> list[Track]:
         """Lee todas las paginas de una relacion de pistas.
 
-        Se pide include=items.artists porque sin el TIDAL solo devuelve los ids
-        de los artistas: el nombre llega vacio y no hay forma de comparar por
-        texto (ni con iTunes ni con Spotify). Si el servidor no acepta ese
-        include se reintenta con el basico y se sigue como hasta ahora.
+        Se piden tambien los artistas porque sin ellos TIDAL solo devuelve sus
+        ids: el nombre llega vacio y no hay forma de comparar por texto (ni con
+        iTunes ni con Spotify). Y los albumes, que es donde vive la fecha de
+        publicacion: en la pista no hay ningun año.
+
+        Si el servidor no admite un include se prueba con menos, hasta el
+        basico de siempre, en vez de quedarse sin nada.
         """
-        for include in ("items.artists", "items"):
+        for include in ("items.artists,items.albums", "items.artists", "items"):
             params = {"countryCode": self.country, "include": include,
                       "locale": "en-US"}
             raw_tracks: list[dict[str, Any]] = []
             artists: dict[str, str] = {}
+            years: dict[str, int] = {}
             try:
                 for page in self._paginate(path, params):
                     for raw in page.get("included") or []:
-                        if raw.get("type") == "tracks":
+                        tipo, ident = raw.get("type"), str(raw.get("id") or "")
+                        attrs = raw.get("attributes") or {}
+                        if tipo == "tracks":
                             raw_tracks.append(raw)
-                        elif raw.get("type") == "artists":
-                            name = (raw.get("attributes") or {}).get("name")
-                            if raw.get("id") and name:
-                                artists[str(raw["id"])] = str(name)
+                        elif tipo == "artists" and ident and attrs.get("name"):
+                            artists[ident] = str(attrs["name"])
+                        elif tipo == "albums" and ident:
+                            year = _year(attrs.get("releaseDate"))
+                            if year:
+                                years[ident] = year
             except ApiError:
                 if include == "items":
                     raise
-                self.log("    TIDAL rechazo include=items.artists, reintento simple")
+                self.log(f"    TIDAL rechazo include={include}, pruebo con menos")
                 continue
-            return [t for t in (_to_track(r, artists) for r in raw_tracks) if t]
+            return [t for t in (_to_track(r, artists, years) for r in raw_tracks) if t]
         return []
 
     # -- usuario ------------------------------------------------------------
@@ -286,7 +294,8 @@ class TidalClient:
 
 # --------------------------------------------------------------------------
 def _to_track(raw: dict[str, Any] | None,
-              artists: dict[str, str] | None = None) -> Track | None:
+              artists: dict[str, str] | None = None,
+              years: dict[str, int] | None = None) -> Track | None:
     if not raw or raw.get("type") != "tracks" or not raw.get("id"):
         return None
     attrs = raw.get("attributes") or {}
@@ -307,7 +316,28 @@ def _to_track(raw: dict[str, Any] | None,
         isrc=isrc,
         duration_ms=_duration_ms(attrs.get("duration")),
         artists=tuple(names),
+        year=_track_year(raw, years or {}),
     )
+
+
+def _track_year(raw: dict[str, Any], years: dict[str, int]) -> int:
+    """El año sale del album al que pertenece la pista."""
+    rel = ((raw.get("relationships") or {}).get("albums") or {}).get("data") or []
+    for item in rel:
+        if isinstance(item, dict) and years.get(str(item.get("id", ""))):
+            return years[str(item["id"])]
+    return 0
+
+
+def _year(release_date: Any) -> int:
+    """De "2022-07-08" saca 2022. Lo que no cuadre se queda en 0."""
+    texto = str(release_date or "")[:4]
+    if len(texto) == 4 and texto.isdigit():
+        numero = int(texto)
+        # Un año fuera de rango es un dato mal puesto, no una fecha.
+        if 1900 <= numero <= 2100:
+            return numero
+    return 0
 
 
 def _artist_names(raw: dict[str, Any], artists: dict[str, str]) -> list[str]:

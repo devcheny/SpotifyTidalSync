@@ -16,6 +16,7 @@ class Track:
     isrc: str = ""
     duration_ms: int = 0
     artists: tuple[str, ...] = ()   # todos los interpretes, si el servicio los da
+    year: int = 0                   # de publicacion, 0 si no se sabe
 
     @property
     def credit(self) -> str:

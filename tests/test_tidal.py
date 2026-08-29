@@ -15,9 +15,13 @@ PAGE_CON_ARTISTAS = {
          "attributes": {"title": "La Fama", "isrc": "ES1234567890",
                         "duration": "PT3M8S"},
          "relationships": {"artists": {"data": [{"id": "a1", "type": "artists"},
-                                                {"id": "a2", "type": "artists"}]}}},
+                                                {"id": "a2", "type": "artists"}]},
+                           "albums": {"data": [{"id": "al1", "type": "albums"}]}}},
         {"type": "artists", "id": "a1", "attributes": {"name": "ROSALÍA"}},
         {"type": "artists", "id": "a2", "attributes": {"name": "The Weeknd"}},
+        # El año no esta en la pista: viene de la fecha del album.
+        {"type": "albums", "id": "al1",
+         "attributes": {"title": "MOTOMAMI", "releaseDate": "2022-03-18"}},
     ],
 }
 
@@ -40,7 +44,7 @@ def cliente(paginas, fallar_con_include=False):
 
     def fake_paginate(path, params):
         intentos.append(params.get("include"))
-        if fallar_con_include and params.get("include") == "items.artists":
+        if fallar_con_include and "items.artists" in (params.get("include") or ""):
             raise ApiError("include no soportado", status=400)
         yield from paginas
 
@@ -57,7 +61,8 @@ assert t.artist == "ROSALÍA", t.artist
 assert t.artists == ("ROSALÍA", "The Weeknd"), t.artists
 assert t.credit == "ROSALÍA, The Weeknd", t.credit
 assert t.duration_ms == 188000, t.duration_ms
-assert intentos == ["items.artists"], intentos
+assert t.year == 2022, t.year
+assert intentos == ["items.artists,items.albums"], intentos
 
 print("--- caso 2: el nombre viene en el meta, como antes ---")
 client, intentos = cliente([PAGE_CON_META])
@@ -70,8 +75,9 @@ print("--- caso 3: TIDAL rechaza include=items.artists -> plan B ---")
 client, intentos = cliente([PAGE_CON_META], fallar_con_include=True)
 t = client._collect("/x")[0]
 print(f"   {t} | intentos={intentos}")
-assert intentos == ["items.artists", "items"], intentos
+assert intentos == ["items.artists,items.albums", "items.artists", "items"], intentos
 assert t.artist == "The Beatles", t.artist
+assert t.year == 0, "sin album incluido no hay año que valga"
 
 print("--- caso 4: si tambien falla el basico, el error sube ---")
 client, intentos = cliente([PAGE_CON_META])
@@ -87,7 +93,7 @@ try:
     raise SystemExit("ERROR: deberia haber lanzado ApiError")
 except ApiError as exc:
     print(f"   ApiError propagado correctamente: {exc}")
-assert intentos == ["items.artists", "items"], intentos
+assert intentos == ["items.artists,items.albums", "items.artists", "items"], intentos
 
 print()
 print("TIDAL OK")
