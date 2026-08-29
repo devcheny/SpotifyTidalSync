@@ -359,7 +359,9 @@ publicar.bat mayor      cambios gordos  1.1.0 -> 2.0.0
 publicar.bat 1.5.2      ese número exacto
 ```
 
-Te enseña qué va a hacer y pide confirmación antes de tocar nada.
+Te enseña qué va a hacer y pide confirmación antes de tocar nada. Si estás en
+otra rama te lo dice y **se ofrece a llevarlo a `main` y publicar desde allí**,
+dejándote de vuelta en la tuya al terminar; GitHub solo publica desde `main`.
 
 Por debajo lo publica [`.github/workflows/publicar.yml`](.github/workflows/publicar.yml):
 cuando llega un push a `main`, lee `__version__`, comprueba que esa versión no

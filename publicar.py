@@ -67,26 +67,26 @@ def main() -> int:
         for linea in pendiente.splitlines()[:10]:
             print(f"   {linea}")
 
-    # Fuera de main no se publica nada: el workflow solo escucha ahi. Sin
-    # decirlo bien alto, uno sube la version y se queda esperando una release
-    # que no va a llegar.
-    if rama != "main":
+    # Fuera de main no se publica nada, porque el workflow solo escucha ahi.
+    # En vez de dejarte los comandos escritos, se ofrece a hacerlo.
+    por_main = rama == "main"
+    if not por_main:
         print()
         print("=" * 62)
-        print(f"OJO: estas en '{rama}', no en main.")
-        print("GitHub solo publica la release cuando el push llega a main, asi")
-        print("que se subira el numero pero NO se publicara nada.")
-        print("Para publicar de verdad:")
-        print("   git checkout main")
-        print(f"   git merge {rama}")
-        print("   git push origin main")
+        print(f"Estas en '{rama}', y GitHub solo publica desde main.")
         print("=" * 62)
-
-    print()
-    pregunta = ("Se hara commit y push a GitHub. ¿Seguimos? [s/N] " if rama == "main"
-                else f"Subir la version en '{rama}' sin publicar release. "
-                     "¿Seguimos? [s/N] ")
-    if input(pregunta).strip().lower() not in ("s", "si", "y"):
+        print()
+        respuesta = input(
+            f"¿Llevo '{rama}' a main y publico desde alli? [S/n] ").strip().lower()
+        if respuesta in ("", "s", "si", "y"):
+            por_main = True
+        elif input(f"Entonces subo la version en '{rama}' SIN publicar "
+                   "release. ¿Seguimos? [s/N] ").strip().lower() \
+                not in ("s", "si", "y"):
+            print("Cancelado, no se ha tocado nada.")
+            return 1
+    elif input("Se hara commit y push a GitHub. ¿Seguimos? [s/N] ").strip().lower() \
+            not in ("s", "si", "y"):
         print("Cancelado, no se ha tocado nada.")
         return 1
 
@@ -96,12 +96,41 @@ def main() -> int:
         encoding="utf-8")
     git("add", str(INIT))
     git("commit", "-m", f"Version {nueva}")
-    git("push", "origin", rama)
+
+    if por_main and rama != "main":
+        _llevar_a_main(rama)
+    else:
+        git("push", "origin", rama)
 
     print()
-    print(f"Subida la version {nueva}. GitHub publicara la v{nueva} en un minuto;")
-    print("puedes seguirlo en la pestana Actions del repositorio.")
+    if por_main:
+        print(f"Subida la version {nueva}. GitHub publicara la v{nueva} en un minuto;")
+        print("puedes seguirlo en la pestana Actions del repositorio.")
+    else:
+        print(f"Version {nueva} subida en '{rama}'. NO se ha publicado release:")
+        print("para publicarla, vuelve a lanzar esto desde main.")
     return 0
+
+
+def _llevar_a_main(rama: str) -> None:
+    """Mueve lo que hay en la rama a main y lo empuja, sin dejarte alli.
+
+    Se vuelve a la rama de trabajo pase lo que pase: quedarse en main sin
+    haberlo pedido es la clase de sorpresa que acaba en un commit perdido.
+    """
+    git("checkout", "main")
+    try:
+        git("merge", rama, "--ff-only")
+        git("push", "origin", "main")
+    except SystemExit:
+        git("checkout", rama)
+        raise SystemExit(
+            f"main y '{rama}' han seguido caminos distintos, asi que no se puede\n"
+            "juntar sin mirar. Hazlo a mano y vuelve a intentarlo:\n"
+            f"   git checkout main && git merge {rama}\n"
+            "La version ya esta subida en tu rama: no hace falta volver a subirla.")
+    git("checkout", rama)
+    print(f"Llevado a main y empujado; sigues en '{rama}'.")
 
 
 if __name__ == "__main__":

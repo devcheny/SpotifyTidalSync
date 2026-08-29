@@ -13,6 +13,7 @@ equipo de desarrollo pelado.
 | `test_buscar.py` | La salida de `--buscar`, que es lo que se mira cuando algo no casa. |
 | `test_actualizar.py` | La actualizacion desde GitHub: comparar versiones, los errores de la API, y que una descarga que no vale no toque la instalacion. |
 | `test_completar.py` | Completar los artistas que faltan en iTunes: que anada los que faltan, que no pise un artista distinto y que la simulacion no escriba. |
+| `test_publicar.py` | La secuencia de git al publicar una version, con git sustituido por un registrador: comprueba donde empuja sin empujar nada. |
 | `test_borrar.py` | Que el borrado en una playlist de TIDAL mande el `meta` de cada entrada, sin el cual la API responde 400. |
 
 ## `test_tareas.py` va aparte
