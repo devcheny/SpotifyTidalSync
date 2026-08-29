@@ -477,6 +477,9 @@ class App(tk.Tk):
             ("flac_after_sync",
              "Convertir al terminar la sincronizacion, lo ultimo de la cola "
              "(y en la tarea programada)"),
+            ("flac_cd_quality",
+             "Calidad CD: 16 bits y 44,1 kHz (1411 kbps). Sin esto, un FLAC de "
+             "24/192 sale a 9216 kbps y ocupa 6 veces mas"),
             ("flac_normalize",
              "Normalizar el volumen (loudnorm, como el flac2alac.bat de siempre)"),
             ("flac_keep_artwork", "Conservar la caratula si el FLAC la trae"),

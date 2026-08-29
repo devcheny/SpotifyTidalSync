@@ -237,6 +237,7 @@ la pestaña. Arriba te dice en verde o en rojo si está listo.
 |---|---|
 | **Carpeta** | Dónde buscar los FLAC y dónde dejar los ALAC. Por defecto `C:\Music\iTunes\iTunes Media\Añadir automáticamente a iTunes`. Busca en subcarpetas; los `.m4a` van siempre a la raíz. |
 | **Convertir al terminar la sincronización** | Igual que la opción de iTunes: se encadena como **último paso de la cola**, después del volcado de playlists, y entra en la tarea diaria de las 24 h sin registrar nada nuevo. |
+| **Calidad CD** | Deja el ALAC en 16 bits y 44,1 kHz, los **1411 kbps** de un CD. Sin esto, un FLAC de 24 bits y 192 kHz sale a **9216 kbps** y ocupa unas seis veces más, porque ALAC no pierde información: se lleva la resolución del original tal cual. Activado por defecto. |
 | **Normalizar el volumen** | `loudnorm=I=-9:TP=-1.5:LRA=11`, lo mismo que hacía el `flac2alac.bat` de siempre. |
 | **Conservar la carátula** | Copia la portada al `.m4a`. Si ffmpeg la rechaza, reintenta sin ella en vez de dar el fichero por perdido. |
 | **Borrar el FLAC** | Al convertirlo bien. Si lo desmarcas, el original se mueve a `_convertidos\` en vez de borrarse. En ambos casos deja de reconvertirse la próxima vez. |
@@ -281,8 +282,8 @@ python main.py --sync           sincroniza una vez y sale
 python main.py --itunes         solo vuelca las playlists de TIDAL en iTunes
 python main.py --itunes --playlist "La Caseta"   solo esa playlist
 python main.py --flac2alac      convierte los FLAC de la carpeta de iTunes a ALAC
-python main.py --status         estado de cuentas, ajustes y tarea programada
 python main.py --buscar "hay que venir"   por que esa cancion no casa con iTunes
+python main.py --status         estado de cuentas, ajustes y tarea programada
 python main.py --dry-run --sync simulación
 python main.py --schedule 03:00 registra la tarea diaria
 python main.py --unschedule     la elimina

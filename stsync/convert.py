@@ -25,6 +25,11 @@ from .config import Config
 # Misma normalizacion que el .bat original: deja la musica bastante alta.
 LOUDNORM = "loudnorm=I=-9:TP=-1.5:LRA=11"
 
+# Calidad CD: 16 bits a 44,1 kHz, o sea los 1411 kbps de toda la vida. El
+# codificador ALAC trabaja con muestras planares, de ahi la "p" de s16p.
+CD_RATE = 44100
+CD_FORMAT = "s16p"
+
 # Carpeta donde van los originales cuando se pide no borrarlos.
 DONE_DIR = "_convertidos"
 
@@ -172,7 +177,7 @@ class FlacConverter:
             return
 
         self.stats.converted += 1
-        self.log(f"      -> {target.name}")
+        self.log(f"      -> {target.name}{_size_change(source, target)}")
         self._retire(source, folder)
 
     def _run_ffmpeg(self, ffmpeg: str, source: Path, target: Path,
@@ -185,6 +190,10 @@ class FlacConverter:
         else:
             command += ["-vn"]
         command += ["-c:a", "alac"]
+        if self.cfg.get("flac_cd_quality", True):
+            # Un FLAC de 24 bits y 192 kHz sale a 9216 kbps y ocupa una
+            # barbaridad; a 16/44,1 son los 1411 kbps de un CD.
+            command += ["-ar", str(CD_RATE), "-sample_fmt", CD_FORMAT]
         if self.cfg.get("flac_normalize", True):
             command += ["-af", LOUDNORM]
         command += ["-movflags", "+faststart", str(target)]
@@ -227,6 +236,21 @@ class FlacConverter:
                 self.stats.cleaned_dirs += 1
             except OSError:
                 pass
+
+
+def _size_change(source: Path, target: Path) -> str:
+    """Cuanto ha bajado. iTunes puede llevarse el .m4a antes de que lo miremos."""
+    try:
+        antes, despues = source.stat().st_size, target.stat().st_size
+    except OSError:
+        return ""
+    if not antes or not despues:
+        return ""
+    return f"  ({_mb(antes)} -> {_mb(despues)})"
+
+
+def _mb(size: int) -> str:
+    return f"{size / (1024 * 1024):.1f} MB"
 
 
 def _free_name(folder: Path, stem: str, suffix: str = ".m4a") -> Path:
