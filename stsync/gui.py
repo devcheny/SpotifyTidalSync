@@ -116,9 +116,14 @@ class App(tk.Tk):
         self.tab_itunes = ttk.Frame(notebook, padding=14)
         self.tab_flac = ttk.Frame(notebook, padding=14)
         self.tab_settings = ttk.Frame(notebook, padding=14)
+        # Las dos pestanas de iTunes solo estorban en un equipo sin iTunes, asi
+        # que solo se ensenan si esta instalado. Los controles se crean igual
+        # (el resto de la ventana cuenta con ellos), pero no se anaden.
+        self.itunes_ok = itunes_diagnose()[0]
         notebook.add(self.tab_main, text="Sincronizacion")
-        notebook.add(self.tab_itunes, text="iTunes")
-        notebook.add(self.tab_flac, text="FLAC a ALAC")
+        if self.itunes_ok:
+            notebook.add(self.tab_itunes, text="iTunes")
+            notebook.add(self.tab_flac, text="FLAC a ALAC")
         notebook.add(self.tab_settings, text="Ajustes")
 
         self._build_main_tab()
