@@ -11,10 +11,13 @@ aparecen se apuntan en el informe y, si lo pides, en una playlist de TIDAL
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from typing import Any, Callable, Iterator
 
 from .config import Config
+from .http import ApiError
 from .model import Track, normalize
 from .tidal import TidalClient
 
@@ -162,8 +165,13 @@ def _com_items(collection: Any) -> Iterator[Any]:
 class _Entry:
     track: Any
     db_id: int
+    artist: str                 # tal y como lo escribe iTunes, para el informe
+    title: str                  # idem, para poder ensenar la errata
+    titles: tuple[str, ...]     # sus variantes normalizadas
     tokens: frozenset[str]      # palabras del artista, ya normalizadas
     duration_s: float
+    unknown_artist: bool        # vacio o "Varios Artistas": no dice nada
+    broken_artist: bool         # trae "?" o el rombo de un acento perdido
 
 
 class LibraryIndex:
@@ -172,56 +180,133 @@ class LibraryIndex:
     iTunes no expone el ISRC, asi que la unica via es el texto: se comparan
     titulo y artista normalizados (sin acentos, sin "feat.", sin "Remastered")
     y, si varias candidatas comparten titulo, se desempata por duracion.
+
+    La misma cancion se escribe de muchas maneras, asi que cada una se indexa
+    por varias formas de su titulo (ver _title_variants) y los recopilatorios,
+    que suelen venir con "Varios Artistas", se tratan como artista desconocido.
     """
 
     def __init__(self) -> None:
         self._by_pair: dict[tuple[str, str], list[_Entry]] = {}
         self._by_title: dict[str, list[_Entry]] = {}
+        self._by_artist: dict[str, list[_Entry]] = {}
         self.size = 0
 
     def add(self, com_track: Any) -> None:
         try:
-            title = normalize(com_track.Name)
+            name = com_track.Name or ""
             artist = com_track.Artist or ""
             db_id = int(com_track.TrackDatabaseID)
             duration = float(com_track.Duration or 0)
         except Exception:  # noqa: BLE001 - cancion ilegible (fichero perdido)
             return
-        if not title:
+        variants = _title_variants(name)
+        if not variants:
             return
 
-        entry = _Entry(com_track, db_id, _tokens(artist), duration)
-        self._by_pair.setdefault((title, normalize(artist)), []).append(entry)
-        self._by_title.setdefault(title, []).append(entry)
+        tokens = _tokens(artist)
+        entry = _Entry(com_track, db_id, artist, name, tuple(variants), tokens,
+                       duration, _is_unknown(tokens), _is_broken(artist))
+        self._by_pair.setdefault((variants[0], normalize(artist)), []).append(entry)
+        for variant in variants:
+            self._by_title.setdefault(variant, []).append(entry)
+        for token in tokens:
+            self._by_artist.setdefault(token, []).append(entry)
         self.size += 1
 
     def find(self, track: Track) -> _Entry | None:
-        title = normalize(track.title)
-        if not title:
+        variants = _title_variants(track.title)
+        if not variants:
             return None
 
         # 1. titulo + artista exactos, con todos los interpretes o solo con el
         #    principal: iTunes guarda unas veces uno y otras veces lo otro.
         for artist in (track.credit, track.artist):
-            found = self._by_pair.get((title, normalize(artist)))
+            found = self._by_pair.get((variants[0], normalize(artist)))
             if found:
                 return found[0]
 
-        # 2. mismo titulo y reparto compatible (uno contiene al otro).
-        candidates = self._by_title.get(title) or []
-        if not candidates:
-            return None
         wanted = _tokens(track.credit)
-        if not wanted:
-            # Sin artista solo se acepta cuando no cabe ninguna duda.
-            return candidates[0] if len(candidates) == 1 else None
+        candidates = self._candidates(variants)
 
+        # 2. mismo titulo y reparto compatible (uno contiene al otro).
         compatible = [e for e in candidates if _compatible(wanted, e.tokens)]
-        if not compatible:
-            return None
         if len(compatible) == 1:
             return compatible[0]
-        return _closest_duration(compatible, track.duration_ms)
+        if compatible:
+            return _closest_duration(compatible, track.duration_ms)
+
+        # 3. la etiqueta de iTunes perdio el acento y dejo "Carr?": el nombre
+        #    queda cortado, asi que solo se puede comparar por como empieza.
+        rotos = [e for e in candidates
+                 if e.broken_artist and _starts_like(wanted, e.tokens)]
+        if len(rotos) == 1:
+            return rotos[0]
+
+        # 4. sin nada que comparar (recopilatorio sin artista, o TIDAL no lo
+        #    dio): vale si no cabe duda, o si la duracion lo confirma.
+        dudosos = [e for e in candidates if e.unknown_artist or not wanted]
+        if dudosos:
+            if len(dudosos) == 1 and not track.duration_ms:
+                return dudosos[0]
+            elegido = _same_duration(dudosos, track.duration_ms)
+            if elegido is not None:
+                return elegido
+
+        # 5. ultimo recurso: mismo artista y titulo casi igual. Cubre las
+        #    erratas de una letra ("Hay Quel Venir al Sur"), que si no dejan
+        #    la cancion fuera aunque la tengas.
+        return self._almost(variants[0], wanted)
+
+    def explain(self, track: Track) -> str:
+        """Por que no se encontro, para que el informe lo diga."""
+        candidates = self._candidates(_title_variants(track.title))
+        if candidates:
+            artistas = sorted({e.artist or "(sin artista)" for e in candidates})
+            return ("en iTunes ese titulo esta a nombre de: "
+                    + ", ".join(artistas[:3]))
+
+        # Ningun titulo coincide: se ensena lo que hay de ese artista, que es
+        # donde se ve de un vistazo una errata en el nombre de la cancion.
+        suyas = sorted({e.title for e in self._artist_entries(_tokens(track.credit))})
+        if suyas:
+            return ("con ese titulo no, pero de ese artista tienes: "
+                    + ", ".join(repr(t) for t in suyas[:3]))
+        return "no esta en la biblioteca"
+
+    def _candidates(self, variants: list[str]) -> list[_Entry]:
+        seen: dict[int, _Entry] = {}
+        for variant in variants:
+            for entry in self._by_title.get(variant) or []:
+                seen.setdefault(id(entry), entry)
+        return list(seen.values())
+
+    def _artist_entries(self, wanted: frozenset[str]) -> list[_Entry]:
+        """Lo que hay en la biblioteca de ese artista."""
+        if not wanted:
+            return []
+        seen: dict[int, _Entry] = {}
+        for token in wanted:
+            for entry in self._by_artist.get(token) or []:
+                # El "Carr?" de una etiqueta rota tampoco casa aqui palabra a
+                # palabra, asi que se admite igual que en la busqueda normal.
+                if (_compatible(wanted, entry.tokens)
+                        or (entry.broken_artist
+                            and _starts_like(wanted, entry.tokens))):
+                    seen.setdefault(id(entry), entry)
+        return list(seen.values())
+
+    def _almost(self, title: str, wanted: frozenset[str]) -> _Entry | None:
+        """Titulo casi igual, pero solo dentro de las canciones de ese artista.
+
+        Con el artista atado y una sola candidata parecida, una letra de
+        diferencia es una errata; con dos candidatas no se adivina.
+        """
+        if len(title) < FUZZY_MIN_LEN:
+            return None
+        cercanos = [e for e in self._artist_entries(wanted)
+                    if any(_almost_equal(title, t) for t in e.titles)]
+        return cercanos[0] if len(cercanos) == 1 else None
 
 
 def _tokens(artist: str) -> frozenset[str]:
@@ -233,12 +318,107 @@ def _compatible(a: frozenset[str], b: frozenset[str]) -> bool:
     return bool(a and b) and (a <= b or b <= a)
 
 
+# Un recopilatorio no dice quien canta: no sirve para descartar ni para elegir.
+_GENERIC_ARTISTS = [frozenset(normalize(name).split()) for name in (
+    "Varios Artistas", "Various Artists", "VA", "VV AA", "Artistas Varios",
+    "Compilation", "Recopilatorio", "Unknown Artist", "Artista Desconocido",
+    "Banda Sonora", "Soundtrack", "Original Soundtrack",
+)]
+
+
+def _is_unknown(tokens: frozenset[str]) -> bool:
+    return not tokens or tokens in _GENERIC_ARTISTS
+
+
+# Un tag mal codificado deja el acento en "?" o en el rombo de sustitucion.
+# chr(0xFFFD) en vez del caracter suelto: asi el fichero es ASCII puro y no
+# depende de con que codificacion se copie.
+_BROKEN_CHARS = ("?", chr(0xFFFD))
+
+
+def _is_broken(text: str) -> bool:
+    return any(char in text for char in _BROKEN_CHARS)
+
+
+def _starts_like(wanted: frozenset[str], broken: frozenset[str]) -> bool:
+    """Cada palabra rota tiene que ser el principio de una del otro lado.
+
+    Se usa solo con etiquetas corruptas y con el titulo ya coincidiendo: sin
+    esas dos condiciones seria demasiado alegre ("carr" vale para Carreras).
+    """
+    if not wanted or not broken:
+        return False
+    return all(any(w.startswith(b) for w in wanted) for b in broken)
+
+
+# "Cancion (A Far L'Amore Comincia Tu)" -> tambien por "Cancion".
+_BRACKETS = re.compile(r"[\(\[][^)\]]*[\)\]]")
+# Solo se corta tras el guion si lo que sigue es una coletilla de edicion.
+_DASH = re.compile(r"\s+[-–—]\s+")
+_EDITION = re.compile(
+    r"remaster|version|edicion|edit|live|directo|vivo|mix|mono|stereo|"
+    r"deluxe|bonus|radio|single|album|instrumental|karaoke", re.IGNORECASE)
+# "01 - Cancion", "01. Cancion" y "01 Cancion Con Mas Palabras".
+_TRACK_NUMBER = re.compile(r"^\s*\d{1,2}\s*[-._)]\s*|^\s*\d{1,2}\s+(?=\S+\s+\S)")
+
+
+def _title_variants(title: str) -> list[str]:
+    """Formas en que la misma cancion aparece escrita. La primera es la buena."""
+    base = normalize(title)
+    if not base:
+        return []
+    out = [base]
+    for candidate in (_BRACKETS.sub(" ", title), _strip_edition(title),
+                      _TRACK_NUMBER.sub("", title)):
+        value = normalize(candidate)
+        if value and value not in out:
+            out.append(value)
+    return out
+
+
+def _strip_edition(title: str) -> str:
+    """Quita el "- Remasterizado 2016" que TIDAL cuelga de muchos titulos."""
+    parts = _DASH.split(title)
+    if len(parts) > 1 and _EDITION.search(parts[-1]):
+        return " - ".join(parts[:-1])
+    return title
+
+
+# Solo se admite una errata en titulos con cuerpo: en "Amor" contra "Amar" una
+# letra lo cambia todo, en un titulo largo casi siempre es un dedazo.
+FUZZY_MIN_LEN = 10
+FUZZY_RATIO = 0.92
+
+
+def _almost_equal(a: str, b: str) -> bool:
+    if abs(len(a) - len(b)) > 3:
+        return False
+    # Los numeros nunca son un dedazo: "Parte 1" y "Parte 2" son distintas,
+    # y sin esto se parecen demasiado para lo que mide SequenceMatcher.
+    if _digits(a) != _digits(b):
+        return False
+    return SequenceMatcher(None, a, b).ratio() >= FUZZY_RATIO
+
+
+def _digits(text: str) -> str:
+    return "".join(char for char in text if char.isdigit())
+
+
 def _closest_duration(entries: list[_Entry], duration_ms: int) -> _Entry:
     if not duration_ms:
         return entries[0]
     wanted = duration_ms / 1000.0
     best = min(entries, key=lambda e: abs(e.duration_s - wanted))
     return best if abs(best.duration_s - wanted) <= DURATION_TOLERANCE_S else entries[0]
+
+
+def _same_duration(entries: list[_Entry], duration_ms: int) -> _Entry | None:
+    """Como _closest_duration, pero sin artista que valga no se arriesga."""
+    if not duration_ms:
+        return None
+    wanted = duration_ms / 1000.0
+    best = min(entries, key=lambda e: abs(e.duration_s - wanted))
+    return best if abs(best.duration_s - wanted) <= DURATION_TOLERANCE_S else None
 
 
 # --------------------------------------------------------------------------
@@ -250,14 +430,18 @@ class ITunesStats:
     created: int = 0
     added: int = 0
     removed: int = 0
-    missing: list[tuple[str, str]] = field(default_factory=list)
+    missing: list[tuple[str, str, str]] = field(default_factory=list)
+    failed: list[tuple[str, str]] = field(default_factory=list)
 
     def summary(self) -> str:
-        return (
+        texto = (
             f"iTunes: {self.playlists} playlists | {self.created} creadas | "
             f"{self.added} canciones anadidas | {self.removed} quitadas | "
             f"{len(self.missing)} no estan en la biblioteca"
         )
+        if self.failed:
+            texto += f" | {len(self.failed)} playlists con error"
+        return texto
 
 
 class ITunesSync:
@@ -294,8 +478,10 @@ class ITunesSync:
                 name = (raw.get("attributes") or {}).get("name") or ""
                 try:
                     self._sync_playlist(library, index, raw, name)
-                except ITunesError as exc:
+                except (ITunesError, ApiError) as exc:
+                    # Que una playlist se tuerza no debe dejar sin hacer el resto.
                     self.log(f"  ! {name}: {exc}")
+                    self.stats.failed.append((name, str(exc)))
         finally:
             library.close()
         return self.stats
@@ -365,7 +551,7 @@ class ITunesSync:
             entry = index.find(track)
             if entry is None:
                 missing.append(track)
-                self.stats.missing.append((name, str(track)))
+                self.stats.missing.append((name, str(track), index.explain(track)))
                 continue
             wanted_ids.add(entry.db_id)
             if entry.db_id in current:
@@ -381,7 +567,8 @@ class ITunesSync:
 
         self.log(f"  ~ {name}: {len(tracks)} en TIDAL, {added} anadidas, "
                  f"{removed} quitadas, {len(missing)} sin encontrar")
-        if missing and self.cfg.get("itunes_missing_playlist"):
+        # Tambien con la lista vacia: hay que sacar de ahi lo que ya no falta.
+        if self.cfg.get("itunes_missing_playlist"):
             self._publish_missing(name, missing)
 
     @staticmethod
@@ -415,7 +602,12 @@ class ITunesSync:
 
     # -------------------------------------------------------------- faltantes
     def _publish_missing(self, source_name: str, missing: list[Track]) -> None:
-        """Deja en TIDAL una playlist con lo que no esta en la biblioteca."""
+        """Mantiene en TIDAL la lista de lo que no esta en la biblioteca.
+
+        Se pone al dia en los dos sentidos: lo que ya has conseguido (o has
+        reetiquetado en iTunes para que casase) sale de la lista, para que sea
+        siempre lo que te falta AHORA y no un historico.
+        """
         name = f"{source_name} - Faltantes en iTunes"
         existing = None
         for raw in self._tidal_lists():
@@ -425,6 +617,8 @@ class ITunesSync:
                 break
 
         if existing is None:
+            if not missing:
+                return          # nada que publicar: no se crea una lista vacia
             created = self.tidal.create_playlist(
                 name, "Canciones de esta playlist que no estan en iTunes")
             playlist_id = created.get("id")
@@ -437,10 +631,88 @@ class ITunesSync:
         if not playlist_id or playlist_id == "dry-run":
             return
         already = {t.id for t in self.tidal.playlist_tracks(str(playlist_id))}
-        nuevas = [t.id for t in missing if t.id not in already]
+        faltan = {t.id for t in missing}
+
+        nuevas = sorted(faltan - already)
         if nuevas:
             self.tidal.add_to_playlist(str(playlist_id), nuevas)
             self.log(f"    {len(nuevas)} anadidas a '{name}'")
+
+        resueltas = sorted(already - faltan)
+        if resueltas:
+            try:
+                self.tidal.remove_from_playlist(str(playlist_id), resueltas)
+                self.log(f"    {len(resueltas)} ya no faltan, fuera de '{name}'")
+            except ApiError as exc:
+                # Limpiar la lista es lo accesorio: el volcado ya esta hecho.
+                self.log(f"    no se pudo limpiar '{name}': {exc}")
+
+
+def inspect_track(cfg: Config, tidal: TidalClient, query: str,
+            log: Callable[[str], None]) -> None:
+    """Ensena que ve el programa de una cancion, en iTunes y en TIDAL.
+
+    Imprime los nombres tal cual (con repr, para que se vean los acentos
+    perdidos y los espacios raros) y su forma normalizada, que es con la que
+    se compara. Sirve para saber por que algo no casa sin tener que adivinar.
+    """
+    wanted = normalize(query)
+    if not wanted:
+        log("Dime un trozo del titulo que buscar.")
+        return
+
+    library = ITunesLibrary(log)
+    library.connect()
+    try:
+        index = LibraryIndex()
+        en_itunes: list[Any] = []
+        for com in _com_items(library.app.LibraryPlaylist.Tracks):
+            index.add(com)
+            try:
+                if wanted in normalize(com.Name or ""):
+                    en_itunes.append(com)
+            except Exception:  # noqa: BLE001
+                continue
+
+        log("")
+        log(f"== En iTunes, titulos que contienen '{query}' ==")
+        if not en_itunes:
+            log("  nada. Ojo: se busca en el campo Nombre, no en el fichero.")
+        for com in en_itunes:
+            nombre, artista = com.Name or "", com.Artist or ""
+            log(f"  {nombre!r}")
+            log(f"      artista : {artista!r}")
+            log(f"      compara : {normalize(nombre)!r} | {normalize(artista)!r}")
+            log(f"      duracion: {float(com.Duration or 0):.0f}s")
+            if _is_broken(artista) or _is_broken(nombre):
+                log("      OJO: hay un '?' o un rombo donde deberia ir un acento; "
+                    "la etiqueta esta mal codificada en iTunes.")
+
+        log("")
+        log(f"== En tus playlists de TIDAL ==")
+        alguna = False
+        for raw in tidal.my_playlists():
+            nombre_lista = (raw.get("attributes") or {}).get("name") or ""
+            if not raw.get("id") or _is_missing_list(nombre_lista):
+                continue
+            for track in tidal.playlist_tracks(str(raw["id"])):
+                if wanted not in normalize(track.title):
+                    continue
+                alguna = True
+                log(f"  [{nombre_lista}] {track.title!r} de {track.credit!r}")
+                log(f"      compara : {normalize(track.title)!r} | "
+                    f"{normalize(track.credit)!r}")
+                log(f"      duracion: {track.duration_ms / 1000:.0f}s")
+                hallado = index.find(track)
+                if hallado is not None:
+                    log(f"      CASA con {hallado.track.Name!r} de "
+                        f"{hallado.artist!r}")
+                else:
+                    log(f"      NO CASA: {index.explain(track)}")
+        if not alguna:
+            log("  no aparece en ninguna playlist tuya de TIDAL")
+    finally:
+        library.close()
 
 
 def _add_track(playlist: Any, com_track: Any, target_name: str) -> None:

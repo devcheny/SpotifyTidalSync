@@ -36,7 +36,7 @@ class Stats:
     added_to_itunes: int = 0
     itunes_playlists: int = 0
     flac_converted: int = 0
-    unmatched: list[tuple[str, str]] = field(default_factory=list)
+    unmatched: list[tuple[str, str, str]] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
@@ -138,9 +138,12 @@ class SyncEngine:
 
         self.stats.added_to_itunes += result.added
         self.stats.itunes_playlists += result.playlists
+        self.stats.errors.extend(f"playlist '{nombre}': {motivo}"
+                                 for nombre, motivo in result.failed)
         # Van al mismo informe CSV que las que no tienen equivalencia online.
         self.stats.unmatched.extend(
-            (f"itunes / {playlist}", song) for playlist, song in result.missing)
+            (f"itunes / {playlist}", song, motivo)
+            for playlist, song, motivo in result.missing)
         self.log(f"  {result.summary()}")
 
     # ------------------------------------------------------------------- FLAC
@@ -358,7 +361,8 @@ class SyncEngine:
                     matched.add(track.key)
                     continue
                 if time.time() - entry.get("ts", 0) < NEGATIVE_TTL:
-                    self.stats.unmatched.append((service, str(track)))
+                    self.stats.unmatched.append(
+                        (service, str(track), "sin equivalencia en el catalogo"))
                     continue  # ya sabemos que no esta, no gastamos otra busqueda
 
             found: Track | None = None
@@ -375,7 +379,8 @@ class SyncEngine:
                 matched.add(track.key)
             else:
                 cache[track.key] = {"id": "", "ts": time.time()}
-                self.stats.unmatched.append((service, str(track)))
+                self.stats.unmatched.append(
+                    (service, str(track), "sin equivalencia en el catalogo"))
 
         return ids, matched
 
@@ -388,7 +393,7 @@ class SyncEngine:
         try:
             with path.open("w", newline="", encoding="utf-8-sig") as handle:
                 writer = csv.writer(handle, delimiter=";")
-                writer.writerow(["destino", "cancion"])
+                writer.writerow(["destino", "cancion", "motivo"])
                 writer.writerows(self.stats.unmatched[:limit])
             self.log(f"Canciones sin equivalencia listadas en: {path}")
         except OSError as exc:

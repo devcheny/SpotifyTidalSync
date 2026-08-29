@@ -140,10 +140,28 @@ comparten título, desempata por duración; si el artista no encaja, **no la añ
 
 **Qué te falta:** el botón *Ver que falta en iTunes* abre el informe del día en
 una tabla dentro de la propia aplicación, con un botón para copiar lo que marques
-y otro para abrirlo en Excel. La columna *destino* dice de qué playlist venía cada
-canción: `itunes / Rock`, `itunes / Zumba`… El mismo botón está como *Ver informe*
-en la pestaña Sincronización, donde además salen las canciones que no tienen
-equivalencia entre Spotify y TIDAL.
+y otro para abrirlo en Excel. Tres columnas:
+
+| destino | cancion | motivo |
+|---|---|---|
+| `itunes / Animacion Old` | `Raffaella Carrà - Hay que venir al sur` | `en iTunes ese titulo esta a nombre de: Georgie Dann` |
+| `itunes / Rock` | `Queen - Innuendo` | `no esta en la biblioteca` |
+| `tidal` | `Extremoduro - So Payaso` | `sin equivalencia en el catalogo` |
+
+El **motivo** distingue lo que de verdad no tienes de lo que sí tienes pero con
+otra etiqueta:
+
+| Motivo | Qué significa |
+|---|---|
+| `en iTunes ese titulo esta a nombre de: …` | La tienes, pero con un artista que no cuadra con el de TIDAL. |
+| `con ese titulo no, pero de ese artista tienes: 'Hay Que Venir al Sur'` | El título no coincide. Compáralo con el de la columna de al lado: ahí se ven las erratas. |
+| `no esta en la biblioteca` | Ni el título ni el artista aparecen. Esta sí te falta de verdad. |
+
+En los dos primeros casos, corrigiendo la etiqueta en iTunes se empareja sola en la
+siguiente pasada.
+
+El mismo botón está como *Ver informe* en la pestaña Sincronización, donde además
+salen las canciones que no tienen equivalencia entre Spotify y TIDAL.
 
 El *Modo simulación* también vale aquí: enseña qué playlists crearía y cuántas
 canciones añadiría sin tocar iTunes.
