@@ -25,6 +25,7 @@ from .spotify import SpotifyClient
 from .store import StateStore, TokenStore
 from .sync import SyncEngine
 from .tidal import TidalClient
+from .updates import UpdateError, apply_release, check, current_version
 
 BG = "#12131a"
 CARD = "#1c1e27"
@@ -49,6 +50,7 @@ class App(tk.Tk):
         self.vars: dict[str, tk.Variable] = {}
         self.worker: threading.Thread | None = None
         self.stop_flag = threading.Event()
+        self._release = None
         self._save_status_job: str | None = None
 
         self._build_styles()
@@ -56,6 +58,7 @@ class App(tk.Tk):
         self._refresh_accounts()
         self._refresh_schedule()
         self.after(100, self._drain_queue)
+        self.after(1500, self._auto_check_updates)
 
     # ------------------------------------------------------------------ estilo
     def _build_styles(self) -> None:
@@ -653,12 +656,114 @@ class App(tk.Tk):
         ttk.Entry(grid, textvariable=self.country_var, width=6).grid(
             row=1, column=1, sticky="w", pady=(8, 0))
 
+        self._build_updates_box()
+
         save_row = ttk.Frame(self.tab_settings)
         save_row.pack(fill="x", pady=14)
         ttk.Button(save_row, text="Guardar ajustes", style="Accent.TButton",
                    command=self._save_settings).pack(side="left")
         self.save_status = ttk.Label(save_row, text="", style="TLabel")
         self.save_status.pack(side="left", padx=12)
+
+    # -- actualizaciones ------------------------------------------------------
+    def _build_updates_box(self) -> None:
+        caja = ttk.Frame(self.tab_settings, style="Card.TFrame", padding=14)
+        caja.pack(fill="x", pady=(12, 0))
+        caja.columnconfigure(1, weight=1)
+
+        ttk.Label(caja, text=f"Actualizaciones  ({current_version()} instalada)",
+                  style="Head.TLabel").grid(row=0, column=0, columnspan=3,
+                                            sticky="w")
+        ttk.Label(caja, text="Proyecto de GitHub del que bajarlas. Tus cuentas y "
+                             "ajustes no se tocan al actualizar: viven fuera de "
+                             "la carpeta del programa.",
+                  style="Muted.TLabel", wraplength=740,
+                  justify="left").grid(row=1, column=0, columnspan=3, sticky="w",
+                                       pady=(2, 10))
+
+        ttk.Label(caja, text="usuario/proyecto",
+                  style="Card.TLabel").grid(row=2, column=0, sticky="w",
+                                            padx=(0, 10))
+        var = tk.StringVar(value=str(self.cfg.get("github_repo", "")))
+        self.vars["github_repo"] = var
+        ttk.Entry(caja, textvariable=var).grid(row=2, column=1, sticky="ew")
+        self.update_button = ttk.Button(caja, text="Buscar ahora", width=15,
+                                        command=self._check_updates)
+        self.update_button.grid(row=2, column=2, padx=(8, 0))
+
+        aviso = tk.BooleanVar(value=bool(self.cfg.get("update_check", True)))
+        self.vars["update_check"] = aviso
+        ttk.Checkbutton(caja, text="Avisarme al abrir si hay una version nueva",
+                        variable=aviso).grid(row=3, column=0, columnspan=3,
+                                             sticky="w", pady=(8, 0))
+        self.update_status = tk.Label(caja, text="", bg=CARD, fg=MUTED,
+                                      wraplength=740, justify="left")
+        self.update_status.grid(row=4, column=0, columnspan=3, sticky="w",
+                                pady=(8, 0))
+
+    def _auto_check_updates(self) -> None:
+        """Al abrir, en segundo plano: no debe retrasar la ventana."""
+        if not self.cfg.get("update_check", True):
+            return
+        if not str(self.cfg.get("github_repo", "")).strip():
+            return
+        threading.Thread(target=self._update_worker, args=(False,),
+                         daemon=True).start()
+
+    def _check_updates(self) -> None:
+        self.cfg.set("github_repo", str(self.vars["github_repo"].get()).strip())
+        self.update_status.configure(text="Consultando GitHub...", fg=MUTED)
+        self.update_button.configure(state="disabled")
+        threading.Thread(target=self._update_worker, args=(False,),
+                         daemon=True).start()
+
+    def _install_update(self) -> None:
+        if self.worker and self.worker.is_alive():
+            return
+        if not messagebox.askyesno(
+                "Actualizar",
+                f"Se instalara la version {self._release.version}.\n\n"
+                "Tus cuentas y tus ajustes no se tocan. Al terminar hay que "
+                "cerrar y volver a abrir la aplicacion.\n\n¿Seguimos?"):
+            return
+        self._set_busy(True)
+        self._append("")
+        self.worker = threading.Thread(target=self._update_worker, args=(True,),
+                                       daemon=True)
+        self.worker.start()
+
+    def _update_worker(self, instalar: bool) -> None:
+        try:
+            if instalar:
+                apply_release(self._release, self._q_log)
+                self.queue.put(("update_done", self._release))
+            else:
+                self.queue.put(("update", check(
+                    str(self.cfg.get("github_repo", "")))))
+        except UpdateError as exc:
+            self.queue.put(("update_error", str(exc)))
+        except Exception as exc:  # noqa: BLE001
+            self.queue.put(("update_error", f"Error inesperado: {exc}"))
+        finally:
+            if instalar:
+                self.queue.put(("done", None))
+
+    def _on_update_checked(self, hay: bool, release) -> None:
+        self._release = release
+        self.update_button.configure(state="normal")
+        if not hay:
+            self.update_status.configure(
+                text=f"✓ Estas al dia ({release.version} es la ultima).",
+                fg=SPOTIFY_GREEN)
+            return
+        self.update_status.configure(
+            text=f"Hay una version nueva: {release.version}", fg=TIDAL_BLUE)
+        if not hasattr(self, "install_button"):
+            self.install_button = ttk.Button(
+                self.update_status.master, text="Instalar",
+                style="Accent.TButton", command=self._install_update)
+            self.install_button.grid(row=5, column=0, sticky="w", pady=(8, 0))
+        self._append(f"Hay una version nueva en GitHub: {release.version}", "ok")
 
     # ------------------------------------------------------------------ estado
     def _refresh_accounts(self) -> None:
@@ -921,6 +1026,7 @@ class App(tk.Tk):
         self.itunes_button.configure(state="disabled" if busy else "normal")
         self.itunes_load_button.configure(state="disabled" if busy else "normal")
         self.flac_button.configure(state="disabled" if busy else "normal")
+        self.update_button.configure(state="disabled" if busy else "normal")
         self.sp_button.configure(state="disabled" if busy else "normal")
         self.td_button.configure(state="disabled" if busy else "normal")
         if busy:
@@ -943,6 +1049,18 @@ class App(tk.Tk):
                 elif kind == "error":
                     self._append(str(payload), "err")
                     messagebox.showerror("Error", str(payload))
+                elif kind == "update":
+                    hay, release = payload  # type: ignore[misc]
+                    self._on_update_checked(hay, release)
+                elif kind == "update_done":
+                    self.update_status.configure(
+                        text=f"Actualizado a {payload}. Cierra y vuelve a abrir "
+                             "la aplicacion.", fg=SPOTIFY_GREEN)
+                    self._append(f"Actualizado a {payload}. Reinicia la "
+                                 "aplicacion.", "ok")
+                elif kind == "update_error":
+                    self.update_button.configure(state="normal")
+                    self.update_status.configure(text=str(payload), fg="#ff6b6b")
                 elif kind == "playlists":
                     self._on_itunes_playlists(list(payload))  # type: ignore[arg-type]
                 elif kind == "name":
