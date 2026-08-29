@@ -224,11 +224,46 @@ class TidalClient:
                 params={"countryCode": self.country},
             )
 
+    def playlist_item_metas(self, playlist_id: str) -> dict[str, list[dict[str, Any]]]:
+        """El "meta" de cada entrada de la playlist, agrupado por cancion.
+
+        Identifica la entrada concreta, no la cancion: la misma puede estar
+        varias veces en la lista, y para borrar hay que decir cual.
+        """
+        out: dict[str, list[dict[str, Any]]] = {}
+        params = {"countryCode": self.country}
+        for page in self._paginate(f"/playlists/{playlist_id}/relationships/items",
+                                   params):
+            for raw in page.get("data") or []:
+                meta = raw.get("meta")
+                if raw.get("id") and isinstance(meta, dict) and meta:
+                    out.setdefault(str(raw["id"]), []).append(meta)
+        return out
+
     def remove_from_playlist(self, playlist_id: str, ids: list[str]) -> None:
-        for chunk in _chunks(ids, WRITE_BATCH):
+        """Quita canciones de una playlist.
+
+        La API rechaza el borrado si no se le devuelve el "meta" de la entrada
+        (INVALID_REQUEST_BODY en data/0/meta), asi que primero hay que leer la
+        playlist para saber cual corresponde a cada cancion.
+        """
+        metas = self.playlist_item_metas(playlist_id)
+        payload: list[dict[str, Any]] = []
+        sin_meta: list[str] = []
+        for track_id in ids:
+            entradas = metas.get(str(track_id))
+            if not entradas:
+                sin_meta.append(str(track_id))
+                continue
+            payload.extend({"id": str(track_id), "type": "tracks",
+                            "meta": _item_meta(meta)} for meta in entradas)
+
+        if sin_meta:
+            self.log(f"    {len(sin_meta)} canciones ya no estaban en la playlist")
+        for chunk in _chunks(payload, WRITE_BATCH):
             self._write(
                 "DELETE", f"/playlists/{playlist_id}/relationships/items",
-                {"data": [{"id": i, "type": "tracks"} for i in chunk]},
+                {"data": chunk},
             )
 
     # -- busqueda -----------------------------------------------------------
@@ -323,6 +358,18 @@ def _cursor_from_link(link: Any) -> str | None:
     return values[0] if values else None
 
 
-def _chunks(items: list[str], size: int) -> Iterator[list[str]]:
+def _item_meta(meta: dict[str, Any]) -> dict[str, Any]:
+    """Lo justo para senalar la entrada al borrarla.
+
+    Se prefiere el identificador si se reconoce; si no, se devuelve el meta tal
+    y como llego, que es lo que la API espera recibir de vuelta.
+    """
+    for key in ("itemId", "id"):
+        if meta.get(key):
+            return {key: meta[key]}
+    return meta
+
+
+def _chunks(items: list[Any], size: int) -> Iterator[list[Any]]:
     for i in range(0, len(items), size):
         yield items[i:i + size]
