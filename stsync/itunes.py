@@ -650,27 +650,35 @@ class ITunesSync:
 
 @dataclass
 class FixStats:
-    completed: int = 0
+    artists: int = 0
+    years: int = 0
     already: int = 0
     failed: list[tuple[str, str]] = field(default_factory=list)
 
+    @property
+    def completed(self) -> int:
+        return self.artists + self.years
+
     def summary(self) -> str:
-        texto = (f"Artistas: {self.completed} completados | "
-                 f"{self.already} ya estaban bien")
+        texto = (f"Datos: {self.artists} artistas y {self.years} años "
+                 f"completados | {self.already} ya estaban bien")
         if self.failed:
             texto += f" | {len(self.failed)} no se pudieron cambiar"
         return texto
 
 
-def complete_artists(cfg: Config, tidal: TidalClient,
-                     log: Callable[[str], None],
-                     should_stop: Callable[[], bool] | None = None) -> FixStats:
-    """Rellena en iTunes los artistas que faltan, tomandolos de TIDAL.
+def complete_tags(cfg: Config, tidal: TidalClient,
+                  log: Callable[[str], None],
+                  should_stop: Callable[[], bool] | None = None) -> FixStats:
+    """Rellena en iTunes los datos que faltan, tomandolos de TIDAL.
 
-    Solo toca las canciones donde iTunes se ha quedado corto: si tiene
-    "ROSALIA" y en TIDAL son "ROSALIA, The Weeknd", pasa a tenerlos los dos.
-    Nunca cambia un artista por otro distinto, y nunca quita ninguno: si lo que
-    hay en iTunes no esta contenido en lo de TIDAL, se deja como esta.
+    Dos cosas, y solo cuando en iTunes falta la informacion:
+
+    - Artistas: si tiene "ROSALIA" y en TIDAL son "ROSALIA, The Weeknd", pasa a
+      tenerlos los dos. Nunca cambia un artista por otro ni quita ninguno; si
+      lo que hay en iTunes no esta contenido en lo de TIDAL, se deja como esta.
+    - Año: solo si la cancion no tiene ninguno. Un año ya puesto no se pisa,
+      porque puede ser el de la edicion que tu tienes y no el de TIDAL.
     """
     parar = should_stop or (lambda: False)
     stats = FixStats()
@@ -693,7 +701,7 @@ def complete_artists(cfg: Config, tidal: TidalClient,
             for track in tidal.playlist_tracks(str(raw["id"])):
                 if parar():
                     break
-                if len(track.artists) < 2:
+                if len(track.artists) < 2 and not track.year:
                     continue        # TIDAL tampoco sabe mas de lo que hay
                 entry = index.find(track)
                 if entry is None or entry.db_id in vistas:
@@ -708,27 +716,53 @@ def complete_artists(cfg: Config, tidal: TidalClient,
 
 def _completar_uno(entry: _Entry, track: Track, playlist: str, cfg: Config,
                    log: Callable[[str], None], stats: FixStats) -> None:
+    cambios: list[tuple[str, Any, str]] = []   # (campo, valor, como contarlo)
+
+    # -- artistas: solo se anaden los que faltan ----------------------------
     completo = track.credit
     actuales, todos = entry.tokens, _tokens(completo)
-    if actuales == todos:
+    if completo and actuales != todos and (not actuales or actuales <= todos):
+        cambios.append(("Artist", completo,
+                        f"artista  {entry.artist!r} -> {completo!r}"))
+
+    # -- año: solo si no tiene ninguno --------------------------------------
+    if track.year and not _year_of(entry.track):
+        cambios.append(("Year", track.year, f"año      (vacio) -> {track.year}"))
+
+    if not cambios:
         stats.already += 1
-        return
-    # Solo se anade: lo que iTunes ya tiene debe estar dentro de lo de TIDAL.
-    if actuales and not actuales <= todos:
         return
 
     log(f"  ~ [{playlist}] {entry.title}")
-    log(f"      {entry.artist!r} -> {completo!r}")
-    if cfg.dry_run:
-        stats.completed += 1
-        return
+    for _campo, _valor, descripcion in cambios:
+        log(f"      {descripcion}")
+
+    for campo, valor, _descripcion in cambios:
+        if cfg.dry_run:
+            _apuntar(stats, campo)
+            continue
+        try:
+            setattr(entry.track, campo, valor)
+        except Exception as exc:  # noqa: BLE001 - solo lectura, en la nube...
+            log(f"      no se pudo cambiar {campo}: {exc}")
+            stats.failed.append((entry.title, str(exc)))
+            continue
+        _apuntar(stats, campo)
+
+
+def _apuntar(stats: FixStats, campo: str) -> None:
+    if campo == "Artist":
+        stats.artists += 1
+    else:
+        stats.years += 1
+
+
+def _year_of(com_track: Any) -> int:
+    """El año que tiene iTunes, 0 si no tiene ninguno."""
     try:
-        entry.track.Artist = completo
-    except Exception as exc:  # noqa: BLE001 - fichero de solo lectura, en la nube...
-        log(f"      no se pudo cambiar: {exc}")
-        stats.failed.append((entry.title, str(exc)))
-        return
-    stats.completed += 1
+        return int(com_track.Year or 0)
+    except Exception:  # noqa: BLE001 - la cancion no expone el campo
+        return 0
 
 
 def inspect_track(cfg: Config, tidal: TidalClient, query: str,
