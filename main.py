@@ -135,7 +135,7 @@ def run_update(aplicar: bool) -> int:
     """Mira si hay version nueva en GitHub y, si se pide, la instala."""
     cfg = Config.load()
     print(f"Version instalada : {current_version()}")
-    repo = str(cfg.get("github_repo", ""))
+    repo = cfg.repo()
     try:
         hay, release = check(repo)
     except UpdateError as exc:

@@ -44,7 +44,7 @@ DEFAULTS: dict[str, Any] = {
     "flac_schedule_time": "04:00",    # o repaso propio, una hora despues
 
     # --- Actualizaciones (para repartir la app entre conocidos) ---
-    "github_repo": "",              # usuario/proyecto de GitHub
+    "github_repo": "devcheny/SpotifyTidalSync",   # de donde salen las versiones
     "update_check": True,           # mirar si hay version nueva al abrir
 
     # --- Comportamiento ---
@@ -70,6 +70,15 @@ class Config:
 
     def set(self, name: str, value: Any) -> None:
         self.data[name] = value
+
+    def repo(self) -> str:
+        """El proyecto de GitHub del que salen las actualizaciones.
+
+        Un config.json de antes de que esto existiera lo tiene guardado en
+        blanco, y un valor guardado gana al de por defecto: por eso vacio se
+        entiende como "el de la aplicacion" y no como "ninguno".
+        """
+        return str(self.data.get("github_repo") or DEFAULTS["github_repo"])
 
     # -- persistencia -------------------------------------------------------
     @classmethod

@@ -699,7 +699,7 @@ class App(tk.Tk):
         ttk.Label(caja, text="usuario/proyecto",
                   style="Card.TLabel").grid(row=2, column=0, sticky="w",
                                             padx=(0, 10))
-        var = tk.StringVar(value=str(self.cfg.get("github_repo", "")))
+        var = tk.StringVar(value=self.cfg.repo())
         self.vars["github_repo"] = var
         ttk.Entry(caja, textvariable=var).grid(row=2, column=1, sticky="ew")
         self.update_button = ttk.Button(caja, text="Buscar ahora", width=15,
@@ -718,9 +718,7 @@ class App(tk.Tk):
 
     def _auto_check_updates(self) -> None:
         """Al abrir, en segundo plano: no debe retrasar la ventana."""
-        if not self.cfg.get("update_check", True):
-            return
-        if not str(self.cfg.get("github_repo", "")).strip():
+        if not self.cfg.get("update_check", True) or not self.cfg.repo():
             return
         threading.Thread(target=self._update_worker, args=(False,),
                          daemon=True).start()
@@ -753,8 +751,7 @@ class App(tk.Tk):
                 apply_release(self._release, self._q_log)
                 self.queue.put(("update_done", self._release))
             else:
-                self.queue.put(("update", check(
-                    str(self.cfg.get("github_repo", "")))))
+                self.queue.put(("update", check(self.cfg.repo())))
         except UpdateError as exc:
             self.queue.put(("update_error", str(exc)))
         except Exception as exc:  # noqa: BLE001

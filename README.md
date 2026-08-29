@@ -334,15 +334,18 @@ sola desde las *releases* de tu repositorio. No hace falta git ni empaquetar nad
 
 1. Instalan Python desde [python.org](https://www.python.org/downloads/), marcando
    *Add Python to PATH*.
-2. Descargan el proyecto (botón verde *Code* → *Download ZIP*) y lo descomprimen
-   donde quieran.
+2. Descargan el proyecto desde
+   [github.com/devcheny/SpotifyTidalSync](https://github.com/devcheny/SpotifyTidalSync)
+   (botón verde *Code* → *Download ZIP*) y lo descomprimen donde quieran.
 3. Doble clic en `instalar.bat`.
-4. Pestaña **Ajustes** → en *Actualizaciones*, escriben tu `usuario/proyecto` →
-   **Guardar ajustes**.
 
-A partir de ahí, cada vez que abran la aplicación les avisará si has publicado algo
+Ya está: el proyecto viene apuntando a ese repositorio, así que no hay nada que
+configurar. Cada vez que abran la aplicación les avisará si has publicado algo
 nuevo, y con el botón **Instalar** se pone al día sola. También vale
 `actualizar.bat`.
+
+Si alguien quiere apuntar a otro sitio (un *fork* suyo, por ejemplo), lo cambia en
+**Ajustes** → *Actualizaciones*.
 
 ### Lo que haces tú para publicar una versión
 
