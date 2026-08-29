@@ -13,7 +13,7 @@ if not exist "%PY%" (
 
 rem test_tareas.py no entra aqui: da de alta tareas en el Programador de
 rem Windows. Se lanza a mano cuando se toca stsync\scheduler.py.
-set "PRUEBAS=test_emparejar test_tidal test_playlists test_convertir test_buscar test_borrar test_actualizar"
+set "PRUEBAS=test_emparejar test_tidal test_playlists test_convertir test_buscar test_borrar test_actualizar test_completar"
 
 set /a FALLOS=0
 for %%T in (%PRUEBAS%) do (

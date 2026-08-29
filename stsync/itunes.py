@@ -648,6 +648,89 @@ class ITunesSync:
                 self.log(f"    no se pudo limpiar '{name}': {exc}")
 
 
+@dataclass
+class FixStats:
+    completed: int = 0
+    already: int = 0
+    failed: list[tuple[str, str]] = field(default_factory=list)
+
+    def summary(self) -> str:
+        texto = (f"Artistas: {self.completed} completados | "
+                 f"{self.already} ya estaban bien")
+        if self.failed:
+            texto += f" | {len(self.failed)} no se pudieron cambiar"
+        return texto
+
+
+def complete_artists(cfg: Config, tidal: TidalClient,
+                     log: Callable[[str], None],
+                     should_stop: Callable[[], bool] | None = None) -> FixStats:
+    """Rellena en iTunes los artistas que faltan, tomandolos de TIDAL.
+
+    Solo toca las canciones donde iTunes se ha quedado corto: si tiene
+    "ROSALIA" y en TIDAL son "ROSALIA, The Weeknd", pasa a tenerlos los dos.
+    Nunca cambia un artista por otro distinto, y nunca quita ninguno: si lo que
+    hay en iTunes no esta contenido en lo de TIDAL, se deja como esta.
+    """
+    parar = should_stop or (lambda: False)
+    stats = FixStats()
+    library = ITunesLibrary(log)
+    library.connect()
+    try:
+        index = library.index()
+        log(f"  indice listo: {index.size} canciones utilizables")
+        sync = ITunesSync(cfg, tidal, log, parar)
+        listas = sync._select_playlists(None)
+        vistas: set[int] = set()
+
+        for raw in listas:
+            if parar():
+                log("  detenido por el usuario")
+                break
+            nombre = (raw.get("attributes") or {}).get("name") or ""
+            if not raw.get("id"):
+                continue
+            for track in tidal.playlist_tracks(str(raw["id"])):
+                if parar():
+                    break
+                if len(track.artists) < 2:
+                    continue        # TIDAL tampoco sabe mas de lo que hay
+                entry = index.find(track)
+                if entry is None or entry.db_id in vistas:
+                    continue
+                vistas.add(entry.db_id)
+                _completar_uno(entry, track, nombre, cfg, log, stats)
+    finally:
+        library.close()
+    log(f"  {stats.summary()}")
+    return stats
+
+
+def _completar_uno(entry: _Entry, track: Track, playlist: str, cfg: Config,
+                   log: Callable[[str], None], stats: FixStats) -> None:
+    completo = track.credit
+    actuales, todos = entry.tokens, _tokens(completo)
+    if actuales == todos:
+        stats.already += 1
+        return
+    # Solo se anade: lo que iTunes ya tiene debe estar dentro de lo de TIDAL.
+    if actuales and not actuales <= todos:
+        return
+
+    log(f"  ~ [{playlist}] {entry.title}")
+    log(f"      {entry.artist!r} -> {completo!r}")
+    if cfg.dry_run:
+        stats.completed += 1
+        return
+    try:
+        entry.track.Artist = completo
+    except Exception as exc:  # noqa: BLE001 - fichero de solo lectura, en la nube...
+        log(f"      no se pudo cambiar: {exc}")
+        stats.failed.append((entry.title, str(exc)))
+        return
+    stats.completed += 1
+
+
 def inspect_track(cfg: Config, tidal: TidalClient, query: str,
             log: Callable[[str], None]) -> None:
     """Ensena que ve el programa de una cancion, en iTunes y en TIDAL.
