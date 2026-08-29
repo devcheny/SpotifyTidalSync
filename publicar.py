@@ -62,16 +62,31 @@ def main() -> int:
     pendiente = git("status", "--porcelain")
     print(f"Version   : {actual}  ->  {nueva}")
     print(f"Rama      : {rama}")
-    if rama != "main":
-        print("AVISO: la release solo se publica desde main.")
     if pendiente:
         print("AVISO: hay cambios sin commitear; se subira solo la version:")
         for linea in pendiente.splitlines()[:10]:
             print(f"   {linea}")
 
+    # Fuera de main no se publica nada: el workflow solo escucha ahi. Sin
+    # decirlo bien alto, uno sube la version y se queda esperando una release
+    # que no va a llegar.
+    if rama != "main":
+        print()
+        print("=" * 62)
+        print(f"OJO: estas en '{rama}', no en main.")
+        print("GitHub solo publica la release cuando el push llega a main, asi")
+        print("que se subira el numero pero NO se publicara nada.")
+        print("Para publicar de verdad:")
+        print("   git checkout main")
+        print(f"   git merge {rama}")
+        print("   git push origin main")
+        print("=" * 62)
+
     print()
-    if input("Se hara commit y push a GitHub. ¿Seguimos? [s/N] ").strip().lower() \
-            not in ("s", "si", "y"):
+    pregunta = ("Se hara commit y push a GitHub. ¿Seguimos? [s/N] " if rama == "main"
+                else f"Subir la version en '{rama}' sin publicar release. "
+                     "¿Seguimos? [s/N] ")
+    if input(pregunta).strip().lower() not in ("s", "si", "y"):
         print("Cancelado, no se ha tocado nada.")
         return 1
 
