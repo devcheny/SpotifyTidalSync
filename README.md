@@ -135,8 +135,63 @@ Cómo empareja: iTunes **no expone el ISRC**, así que aquí el emparejamiento e
 texto. Se comparan título y artista normalizados —sin acentos, sin `(Remastered)`,
 sin `feat.`, y con las comas y los puntos y coma tratados igual—, de modo que
 *Despechá* de `ROSALÍA` encuentra a *Despecha* de `Rosalia`, y *La Fama* de
-`ROSALÍA, The Weeknd` encuentra a la de `ROSALÍA; The Weeknd`. Si varias canciones
-comparten título, desempata por duración; si el artista no encaja, **no la añade**.
+`ROSALÍA, The Weeknd` encuentra a la de `ROSALÍA; The Weeknd`.
+
+La misma canción aparece escrita de muchas maneras, así que cada una se busca
+también por estas variantes de su título:
+
+| En iTunes o en TIDAL | También se busca como |
+|---|---|
+| `Hay Que Venir Al Sur (A Far L'Amore…)` | `Hay Que Venir Al Sur` |
+| `Hay que venir al sur - Remasterizado 2016` | `Hay que venir al sur` |
+| `01 Hay Que Venir Al Sur` | `Hay Que Venir Al Sur` |
+
+Del guion solo se corta si lo que sigue es una coletilla de edición (*remaster*,
+*version*, *live*, *mix*, *radio*…), y el número de pista solo si lo que queda
+tiene varias palabras: así *99 Luftballons* o *7 Rings* se quedan como están.
+
+Con los **recopilatorios**, donde el artista suele ser `Varios Artistas` o estar
+vacío, no hay artista con el que comparar: en ese caso se acepta la canción si es
+la única con ese título, o si la duración cuadra con la de TIDAL. Fuera de esos
+casos, **si el artista no encaja no la añade**: prefiere dejarla en el informe
+antes que meterte una versión que no es.
+
+Los acentos no son problema: `Carrà`, `Carra` y hasta un `CarrÃ ` mal codificado
+se comparan igual. Lo que sí rompe es que el acento se haya **perdido** al
+etiquetar y en iTunes ponga `Carr?` o `Carr�`; ahí el nombre queda cortado y solo
+se puede comparar por cómo empieza, cosa que se hace únicamente cuando no hay
+ninguna otra candidata posible.
+
+**Erratas en el título.** Un `Hay Quel Venir al Sur` en TIDAL frente a un
+`Hay Que Venir al Sur` en iTunes dejaba la canción fuera para siempre. Como último
+recurso se admite un título casi igual, pero con el cinturón muy corto: solo entre
+canciones **del mismo artista**, con títulos de al menos 10 caracteres, con una
+única candidata parecida y **si los números coinciden** (`Parte 1` y `Parte 2` no
+son la misma canción por mucho que se parezcan).
+
+### Por qué no casa una canción concreta
+
+```
+buscar-cancion.bat "hay que venir"
+```
+
+o `python main.py --buscar "hay que venir"`. Enseña esa canción tal y como la ve
+el programa en los dos lados —el texto en crudo, para que se vean los acentos
+perdidos y los espacios raros, y la forma normalizada con la que de verdad se
+compara— y termina diciendo si casan y por qué no:
+
+```
+== En iTunes, titulos que contienen 'hay que venir' ==
+  'Hay Que Venir Al Sur'
+      artista : 'Raffaella Carr?'
+      compara : 'hay que venir al sur' | 'raffaella carr'
+      OJO: hay un '?' o un rombo donde deberia ir un acento
+
+== En tus playlists de TIDAL ==
+  [Animacion Old] 'Hay que venir al Sur' de 'Raffaella Carrà'
+      compara : 'hay que venir al sur' | 'raffaella carra'
+      CASA con 'Hay Que Venir Al Sur' de 'Raffaella Carr?'
+```
 
 **Qué te falta:** el botón *Ver que falta en iTunes* abre el informe del día en
 una tabla dentro de la propia aplicación, con un botón para copiar lo que marques
@@ -227,13 +282,15 @@ python main.py --itunes         solo vuelca las playlists de TIDAL en iTunes
 python main.py --itunes --playlist "La Caseta"   solo esa playlist
 python main.py --flac2alac      convierte los FLAC de la carpeta de iTunes a ALAC
 python main.py --status         estado de cuentas, ajustes y tarea programada
+python main.py --buscar "hay que venir"   por que esa cancion no casa con iTunes
 python main.py --dry-run --sync simulación
 python main.py --schedule 03:00 registra la tarea diaria
 python main.py --unschedule     la elimina
 ```
 
-O los lanzadores: `sincronizar-ahora.bat`, `estado.bat`, `convertir-flac.bat` y
-`sincronizar-itunes.bat` (que acepta el nombre de una playlist como argumento).
+O los lanzadores: `sincronizar-ahora.bat`, `estado.bat`, `convertir-flac.bat`,
+`buscar-cancion.bat` y `sincronizar-itunes.bat` (estos dos aceptan el texto o el
+nombre de la playlist como argumento; si no se lo das, te lo preguntan).
 
 ## Dónde vive todo
 

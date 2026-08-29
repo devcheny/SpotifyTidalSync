@@ -5,6 +5,7 @@
   python main.py --itunes   -> solo vuelca las playlists de TIDAL en iTunes
   python main.py --flac2alac -> convierte a ALAC los FLAC de la carpeta de iTunes
   python main.py --itunes --playlist "Mi lista"  -> solo esa playlist
+  python main.py --buscar "hay que venir"  -> por que no casa esa cancion
   python main.py --status   -> muestra el estado actual
   python main.py --schedule 03:00 / --unschedule
   python main.py --schedule-flac 04:00 / --unschedule-flac
@@ -19,6 +20,7 @@ from stsync import scheduler
 from stsync.config import Config
 from stsync.convert import ConvertError, FlacConverter
 from stsync.http import ApiError
+from stsync.itunes import ITunesError, inspect_track
 from stsync.oauth import OAuthError
 from stsync.paths import app_dir, log_file
 from stsync.store import StateStore, TokenStore
@@ -110,6 +112,22 @@ def run_flac2alac() -> int:
         handle.close()
 
 
+def run_inspect(query: str) -> int:
+    """Compara una cancion en iTunes y en TIDAL para ver por que no casa."""
+    from stsync.store import TokenStore as _Tokens
+    from stsync.tidal import TidalClient
+    cfg, tokens = Config.load(), _Tokens()
+    if not tokens.has("tidal"):
+        print("Conecta TIDAL antes de buscar.")
+        return 1
+    try:
+        inspect_track(cfg, TidalClient(cfg, tokens, print), query, print)
+        return 0
+    except (ITunesError, ApiError) as exc:
+        print(f"ERROR: {exc}")
+        return 1
+
+
 def show_status() -> int:
     cfg, tokens, state = Config.load(), TokenStore(), StateStore()
     names = state.data.get("names", {})
@@ -155,6 +173,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="con --itunes, sincroniza solo esa playlist de TIDAL")
     parser.add_argument("--flac2alac", action="store_true",
                         help="convierte a ALAC los FLAC de la carpeta de iTunes")
+    parser.add_argument("--buscar", metavar="TEXTO",
+                        help="ensena como ve esa cancion en iTunes y en TIDAL")
     parser.add_argument("--status", action="store_true",
                         help="muestra el estado y sale")
     parser.add_argument("--schedule", metavar="HH:MM",
@@ -174,6 +194,8 @@ def main(argv: list[str] | None = None) -> int:
         cfg.set("dry_run", True)
         cfg.save()
 
+    if args.buscar:
+        return run_inspect(args.buscar)
     if args.status:
         return show_status()
     if args.schedule:
