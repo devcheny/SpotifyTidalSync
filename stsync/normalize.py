@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 import subprocess
-import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -36,6 +36,11 @@ CON_PERDIDA = {
     "wmav2": ["-c:a", "wmav2", "-b:a", "192k"],
 }
 
+# En Windows, sustituir un fichero recien escrito falla de vez en cuando
+# porque el antivirus o el indexador lo tienen abierto un momento.
+INTENTOS_SUSTITUIR = 5
+ESPERA_SUSTITUIR = 0.3
+
 
 @dataclass
 class LibraryStats:
@@ -44,6 +49,7 @@ class LibraryStats:
     bajadas: int = 0            # ademas, pasadas a calidad CD
     ya_estaban: int = 0
     saltadas: int = 0           # sin fichero, o formato que no se toca
+    sin_refrescar: int = 0      # cambiadas, pero iTunes no releyo sus datos
     fallidas: list[tuple[str, str]] = field(default_factory=list)
 
     def summary(self) -> str:
@@ -53,6 +59,8 @@ class LibraryStats:
                  f"{self.saltadas} sin tocar")
         if self.fallidas:
             texto += f" | {len(self.fallidas)} con error"
+        if self.sin_refrescar:
+            texto += f" | {self.sin_refrescar} sin releer en iTunes"
         return texto
 
 
@@ -106,6 +114,9 @@ def normalize_library(cfg: Config, log: Callable[[str], None],
         library.close()
 
     log(f"  {stats.summary()}")
+    if stats.sin_refrescar:
+        log("  Esas seguiran ensenando en iTunes los kbps de antes hasta que "
+            "las selecciones y uses Archivo > Biblioteca > Obtener informacion.")
     return stats
 
 
@@ -155,10 +166,14 @@ def _revisar(track: Any, ffmpeg: str, ffprobe: str, cfg: Config,
 
     stats.normalizadas += 1
     stats.bajadas += bool(bajar)
+
+    # iTunes se queda con lo que anoto el dia que la importo: si no se le dice
+    # que relea el fichero, sigue ensenando los kbps y el tamano de antes.
     try:
-        track.UpdateInfoFromFile()   # que iTunes relea duracion y tamano
-    except Exception:  # noqa: BLE001 - no es grave si no puede
-        pass
+        track.UpdateInfoFromFile()
+    except Exception as exc:  # noqa: BLE001 - iTunes ocupado, fichero en uso...
+        stats.sin_refrescar += 1
+        log(f"      cambiada, pero iTunes no ha releido sus datos: {exc}")
 
 
 def _fichero_de(track: Any) -> Path | None:
@@ -204,10 +219,27 @@ def _reescribir(ffmpeg: str, fichero: Path, codec_args: list[str],
         temporal.unlink(missing_ok=True)
         return detalle[-1] if detalle else "ffmpeg fallo"
 
-    try:
-        os.replace(temporal, fichero)
-    except OSError as exc:
-        # Suele ser que iTunes lo esta reproduciendo en ese momento.
+    fallo = _sustituir(temporal, fichero)
+    if fallo:
         temporal.unlink(missing_ok=True)
-        return f"no se pudo sustituir el fichero ({exc})"
+        return f"no se pudo sustituir el fichero ({fallo})"
     return ""
+
+
+def _sustituir(temporal: Path, fichero: Path) -> str:
+    """Cambia el fichero por el nuevo, con paciencia.
+
+    En Windows esto falla de vez en cuando aunque nadie lo este usando: el
+    antivirus o el indexador abren el fichero recien escrito un instante. Con
+    una biblioteca entera pasa a menudo, asi que se reintenta antes de darlo
+    por perdido. Si iTunes lo esta reproduciendo, no habra manera y se dira.
+    """
+    ultimo = ""
+    for intento in range(INTENTOS_SUSTITUIR):
+        try:
+            os.replace(temporal, fichero)
+            return ""
+        except OSError as exc:
+            ultimo = str(exc)
+            time.sleep(ESPERA_SUSTITUIR * (intento + 1))
+    return ultimo

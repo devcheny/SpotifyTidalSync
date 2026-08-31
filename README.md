@@ -277,6 +277,12 @@ Cómo se protege lo tuyo, que aquí se reescriben ficheros de verdad:
 - Lo que no sea un fichero local (nube, CD) ni se mira.
 - El botón **Probar** de al lado lo mide todo y te dice qué haría, sin escribir.
 
+Al terminar cada canción se le dice a iTunes que **relea el fichero**, así que los
+kbps y el tamaño se actualizan solos: no hace falta analizar la biblioteca a mano.
+Si alguna no se deja (porque iTunes la esté reproduciendo, por ejemplo), sale en el
+registro y en el resumen como *sin releer en iTunes*; esas se arreglan
+seleccionándolas y usando *Archivo → Biblioteca → Obtener información*.
+
 También `python main.py --biblioteca`.
 
 ### Que lo revise solo una vez al día

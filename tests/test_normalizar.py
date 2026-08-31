@@ -16,12 +16,15 @@ FFMPEG = str(AQUI / "ffmpeg-falso.bat")
 class Com:
     """Una cancion de iTunes: solo lo que se le pide aqui."""
 
-    def __init__(self, ruta, kind=1):
+    def __init__(self, ruta, kind=1, refresco_falla=False):
         self.Location = str(ruta)
         self.Kind = kind
         self.refrescada = False
+        self.refresco_falla = refresco_falla
 
     def UpdateInfoFromFile(self):
+        if self.refresco_falla:
+            raise OSError("iTunes esta ocupado")
         self.refrescada = True
 
 
@@ -144,6 +147,26 @@ assert stats.normalizadas == 0, stats.normalizadas
 assert len(stats.fallidas) == 2, stats.fallidas
 assert (BANCO / "baja.m4a").read_bytes() == b"original baja", "el original sigue ahi"
 assert not list(BANCO.glob(".*normalizando*")), "no debe dejar temporales"
+
+# --- 7. iTunes tiene que releer el fichero cambiado -------------------------
+canciones = montar()
+stats = normalize_library(config(), lambda m: None)
+tocadas = [c for c in canciones if c.refrescada]
+print("7. se le dice a iTunes que relea:", len(tocadas), "canciones")
+assert len(tocadas) == 2, [c.Location for c in tocadas]
+assert stats.sin_refrescar == 0, stats.sin_refrescar
+
+# Y si iTunes no puede releerlo, se dice en vez de callarlo: si no, seguiria
+# ensenando los kbps de antes sin que nadie sepa por que.
+canciones = montar()
+for c in canciones:
+    c.refresco_falla = True
+lineas = []
+stats = normalize_library(config(), lineas.append)
+print("   si iTunes no puede:", stats.sin_refrescar, "avisadas")
+assert stats.sin_refrescar == 2, stats.sin_refrescar
+assert any("no ha releido" in l for l in lineas), lineas
+assert "sin releer en iTunes" in stats.summary(), stats.summary()
 
 shutil.rmtree(BANCO)
 print()
