@@ -26,6 +26,9 @@ def montar() -> Path:
     (rechazados / "2026-08-28 16.20.32" / "Xiyo - Do You Remember.flac").write_bytes(b"flac1")
     (rechazados / "2026-08-27 10.00.00" / "Xiyo - Do You Remember.flac").write_bytes(b"flac2")
     (rechazados / "2026-08-27 10.00.00" / "Otra cancion.flac").write_bytes(b"flac3")
+    # Un WAV y un AIFF tambien se convierten; el MP3 no, que ya perdio calidad.
+    (folder / "Grabacion.wav").write_bytes(b"wav")
+    (folder / "Vieja.aiff").write_bytes(b"aiff")
     # Ya convertido antes: no se debe machacar.
     (folder / "Xiyo - Do You Remember.m4a").write_bytes(b"ya estaba")
     # Otros formatos: no se tocan.
@@ -60,7 +63,7 @@ def contenido(folder: Path) -> list[str]:
 folder = montar()
 stats = correr("normal", folder, config(folder))
 print("queda:", contenido(folder), "\n")
-assert stats.converted == 3, stats.converted
+assert stats.converted == 5, stats.converted
 assert not stats.failed, stats.failed
 hay = contenido(folder)
 assert "Xiyo - Do You Remember.m4a" in hay          # el de antes, intacto
@@ -77,9 +80,12 @@ folder = montar()
 stats = correr("mover en vez de borrar", folder, config(folder, flac_delete_source=False))
 hay = contenido(folder)
 print("queda:", hay, "\n")
-guardados = [p for p in hay if p.startswith(DONE_DIR) and p.endswith(".flac")]
-assert len(guardados) == 3, guardados
+guardados = [p for p in hay if p.startswith(DONE_DIR + "/")]
+assert len(guardados) == 5, guardados
 assert DONE_DIR + "/Xiyo - Do You Remember (2).flac" in hay, hay
+# Cada uno con su extension: un WAV archivado como .flac no lo abre nadie.
+assert DONE_DIR + "/Grabacion.wav" in hay, hay
+assert DONE_DIR + "/Vieja.aiff" in hay, hay
 
 # --- 3. ffmpeg rechaza la caratula -> reintento sin ella --------------------
 folder = montar()
@@ -87,7 +93,7 @@ os.environ["FALLA_CARATULA"] = "1"
 stats = correr("caratula rechazada", folder, config(folder))
 del os.environ["FALLA_CARATULA"]
 print()
-assert stats.converted == 3, stats.converted
+assert stats.converted == 5, stats.converted
 assert not stats.failed, stats.failed
 
 # --- 4. ffmpeg falla del todo ----------------------------------------------
@@ -98,7 +104,7 @@ del os.environ["FALLA_TODO"]
 hay = contenido(folder)
 print("queda:", hay, "\n")
 assert stats.converted == 0, stats.converted
-assert len(stats.failed) == 3, stats.failed
+assert len(stats.failed) == 5, stats.failed
 assert len([p for p in hay if p.endswith(".flac")]) == 3, "no debe borrar si fallo"
 assert len([p for p in hay if p.endswith(".m4a")]) == 1, "no debe dejar restos"
 
@@ -108,7 +114,7 @@ antes = contenido(folder)
 stats = correr("simulacion", folder, config(folder, dry_run=True))
 print()
 assert contenido(folder) == antes, "la simulacion no debe tocar nada"
-assert stats.converted == 3, stats.converted
+assert stats.converted == 5, stats.converted
 
 # --- 6. Sin ffmpeg y carpeta inexistente ------------------------------------
 for nombre, cfg in (("sin ffmpeg", config(folder, ffmpeg_path=str(AQUI / "no-existe.exe"))),

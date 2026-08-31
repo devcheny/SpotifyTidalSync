@@ -223,19 +223,24 @@ canciones añadiría sin tocar iTunes.
 
 ---
 
-## Convertir FLAC a ALAC
+## Convertir a ALAC
 
-Pestaña **FLAC a ALAC**. iTunes no sabe leer FLAC: lo que dejas en la carpeta de
+Pestaña **Convertir a ALAC**. iTunes no sabe leer FLAC: lo que dejas en la carpeta de
 auto-añadir acaba arrinconado en su subcarpeta `No añadido\<fecha>\`. Esto recorre
-esa carpeta entera, convierte cada FLAC a ALAC con **ffmpeg** y deja el `.m4a` en
-la raíz, que es donde iTunes sí lo recoge solo.
+esa carpeta entera y convierte a ALAC con **ffmpeg** todo lo que sea sin pérdida
+—FLAC, WAV, AIFF, APE, WavPack—, dejando el `.m4a` en la raíz, que es donde
+iTunes sí lo recoge solo. Un WAV iTunes sí lo lee, pero ocupa el triple y apenas
+admite etiquetas.
+
+**Los MP3 y demás formatos con pérdida no se tocan**: pasarlos a ALAC no les
+devolvería la calidad que ya perdieron, solo ocuparían el triple.
 
 Necesita ffmpeg: `winget install Gyan.FFmpeg`, o indica la ruta a `ffmpeg.exe` en
 la pestaña. Arriba te dice en verde o en rojo si está listo.
 
 | Ajuste | Qué hace |
 |---|---|
-| **Carpeta** | Dónde buscar los FLAC y dónde dejar los ALAC. Por defecto `C:\Music\iTunes\iTunes Media\Añadir automáticamente a iTunes`. Busca en subcarpetas; los `.m4a` van siempre a la raíz. |
+| **Carpeta** | Dónde buscar y dónde dejar los ALAC. Por defecto `C:\Music\iTunes\iTunes Media\Añadir automáticamente a iTunes`. Busca en subcarpetas; los `.m4a` van siempre a la raíz. |
 | **Convertir al terminar la sincronización** | Igual que la opción de iTunes: se encadena como **último paso de la cola**, después del volcado de playlists, y entra en la tarea diaria de las 24 h sin registrar nada nuevo. |
 | **Calidad CD** | Deja el ALAC en 16 bits y 44,1 kHz, los **1411 kbps** de un CD. Sin esto, un FLAC de 24 bits y 192 kHz sale a **9216 kbps** y ocupa unas seis veces más, porque ALAC no pierde información: se lleva la resolución del original tal cual. Activado por defecto. |
 | **Normalizar el volumen** | `loudnorm=I=-9:TP=-1.5:LRA=11`, lo mismo que hacía el `flac2alac.bat` de siempre. |
@@ -274,6 +279,10 @@ Cómo se protege lo tuyo, que aquí se reescriben ficheros de verdad:
   comprimirlos los degrada. Hay una casilla para incluirlos si te da igual.
 - Cada canción se convierte **a un temporal** y solo entonces se sustituye la
   original, así que un fallo a medias no deja nada destrozado.
+- Los **WAV y FLAC que ya estén en la biblioteca** se pasan a ALAC: mismo sonido,
+  la mitad de espacio. Como eso cambia la extensión, se le dice a iTunes dónde
+  está ahora la canción y el original no se borra hasta que lo ha aceptado; así
+  no te quedan canciones rotas con la exclamación.
 - Lo que no sea un fichero local (nube, CD) ni se mira.
 - El botón **Probar** de al lado lo mide todo y te dice qué haría, sin escribir.
 
@@ -301,7 +310,7 @@ Si lo único que quieres es el repaso de FLAC, sin sincronizar Spotify ni TIDAL,
 usa la segunda: no necesita cuentas conectadas.
 
 Desde la línea de comandos: `python main.py --flac2alac`, el lanzador
-`convertir-flac.bat`, o `python main.py --schedule-flac 04:00` /
+`convertir-a-alac.bat`, o `python main.py --schedule-flac 04:00` /
 `--unschedule-flac` para la tarea diaria.
 
 ## Uso desde la línea de comandos
@@ -321,7 +330,7 @@ python main.py --schedule 03:00 registra la tarea diaria
 python main.py --unschedule     la elimina
 ```
 
-O los lanzadores: `sincronizar-ahora.bat`, `estado.bat`, `convertir-flac.bat`,
+O los lanzadores: `sincronizar-ahora.bat`, `estado.bat`, `convertir-a-alac.bat`,
 `buscar-cancion.bat`, `actualizar.bat` y `sincronizar-itunes.bat` (estos dos aceptan el texto o el
 nombre de la playlist como argumento; si no se lo das, te lo preguntan).
 

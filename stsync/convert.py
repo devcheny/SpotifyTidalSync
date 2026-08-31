@@ -1,9 +1,13 @@
-"""Conversion de FLAC a ALAC para la carpeta de auto-anadir de iTunes.
+"""Conversion a ALAC para la carpeta de auto-anadir de iTunes.
 
 iTunes no sabe leer FLAC: lo que dejas en "Anadir automaticamente a iTunes"
-acaba arrinconado en su subcarpeta "No anadido". Esto recorre esa carpeta
-entera, convierte cada FLAC a ALAC con ffmpeg y deja el .m4a en la raiz, que
-es donde iTunes si lo recoge solo.
+acaba arrinconado en su subcarpeta "No anadido". Y un WAV si lo lee, pero
+ocupa el triple y casi no admite etiquetas. Esto recorre esa carpeta entera,
+convierte a ALAC todo lo que sea sin perdida y deja el .m4a en la raiz, que es
+donde iTunes si lo recoge solo.
+
+Solo se convierte lo que no pierde nada por el camino. Un MP3 pasado a ALAC no
+recuperaria la calidad que ya perdio: solo ocuparia mas, asi que se deja.
 
 Viene del flac2alac.bat de siempre y mantiene su normalizacion de volumen
 (loudnorm I=-9). Cambia en tres cosas, todas para no perder nada: comprueba
@@ -37,6 +41,11 @@ MEDIDAS = ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")
 # codificador ALAC trabaja con muestras planares, de ahi la "p" de s16p.
 CD_RATE = 44100
 CD_FORMAT = "s16p"
+
+# Lo que se convierte a ALAC: formatos sin perdida que iTunes o no lee, o lee
+# ocupando de mas. Los de con perdida (mp3, ogg, opus, wma) no entran: pasarlos
+# a ALAC no devuelve la calidad que ya perdieron y encima ocuparian el triple.
+CONVERTIBLES = (".flac", ".wav", ".aif", ".aiff", ".ape", ".wv")
 
 # Carpeta donde van los originales cuando se pide no borrarlos.
 DONE_DIR = "_convertidos"
@@ -101,7 +110,7 @@ class ConvertStats:
     cleaned_dirs: int = 0
 
     def summary(self) -> str:
-        return (f"FLAC a ALAC: {self.converted} convertidos | "
+        return (f"A ALAC: {self.converted} convertidos | "
                 f"{len(self.failed)} con error | "
                 f"{self.cleaned_dirs} carpetas vacias eliminadas")
 
@@ -117,7 +126,7 @@ class FlacConverter:
     # ---------------------------------------------------------------- publico
     def run(self) -> ConvertStats:
         self.log("")
-        self.log("== FLAC a ALAC ==")
+        self.log("== Convertir a ALAC ==")
         if self.cfg.dry_run:
             self.log("  (simulacion: no se convierte ni se borra nada)")
 
@@ -125,17 +134,17 @@ class FlacConverter:
         if not ffmpeg:
             raise ConvertError(
                 "No se encuentra ffmpeg. Instalalo con 'winget install Gyan.FFmpeg' "
-                "o indica su ruta en la pestana FLAC a ALAC.")
+                "o indica su ruta en la pestana Convertir a ALAC.")
 
         folder = Path(str(self.cfg.get("flac_folder", "")))
         if not folder.is_dir():
             raise ConvertError(f"La carpeta no existe: {folder}")
 
-        sources = self._find_flacs(folder)
+        sources = self._find_sources(folder)
         if not sources:
-            self.log(f"  no hay ningun FLAC en {folder}")
+            self.log(f"  no hay nada que convertir en {folder}")
             return self.stats
-        self.log(f"  {len(sources)} FLAC encontrados en {folder}")
+        self.log(f"  {len(sources)} ficheros que convertir en {folder}")
 
         for i, source in enumerate(sources, 1):
             if self.should_stop():
@@ -148,12 +157,12 @@ class FlacConverter:
         return self.stats
 
     # ----------------------------------------------------------------- buscar
-    def _find_flacs(self, folder: Path) -> list[Path]:
-        """Todos los FLAC de la carpeta y sus subcarpetas, menos los ya hechos."""
+    def _find_sources(self, folder: Path) -> list[Path]:
+        """Lo convertible de la carpeta y sus subcarpetas, menos lo ya hecho."""
         done = folder / DONE_DIR
         out = []
         for path in sorted(folder.rglob("*")):
-            if path.suffix.lower() != ".flac" or not path.is_file():
+            if path.suffix.lower() not in CONVERTIBLES or not path.is_file():
                 continue
             if done in path.parents:
                 continue
@@ -260,7 +269,9 @@ class FlacConverter:
         done = folder / DONE_DIR
         try:
             done.mkdir(exist_ok=True)
-            source.replace(_free_name(done, source.stem, ".flac"))
+            # Con su extension de siempre: un WAV archivado como .flac no hay
+            # programa que lo abra.
+            source.replace(_free_name(done, source.stem, source.suffix))
         except OSError as exc:
             self.log(f"      no se pudo mover el FLAC a {DONE_DIR}: {exc}")
 

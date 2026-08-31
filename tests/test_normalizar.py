@@ -16,11 +16,17 @@ FFMPEG = str(AQUI / "ffmpeg-falso.bat")
 class Com:
     """Una cancion de iTunes: solo lo que se le pide aqui."""
 
-    def __init__(self, ruta, kind=1, refresco_falla=False):
-        self.Location = str(ruta)
+    def __init__(self, ruta, kind=1, refresco_falla=False, location_falla=False):
+        object.__setattr__(self, "Location", str(ruta))
         self.Kind = kind
         self.refrescada = False
         self.refresco_falla = refresco_falla
+        self.location_falla = location_falla
+
+    def __setattr__(self, campo, valor):
+        if campo == "Location" and getattr(self, "location_falla", False):
+            raise OSError("iTunes no acepta esa ruta")
+        object.__setattr__(self, campo, valor)
 
     def UpdateInfoFromFile(self):
         if self.refresco_falla:
@@ -66,6 +72,7 @@ def montar():
         "cancion-ok.m4a": b"original ok",      # ya esta a -9.0 -> no tocar
         "hires-ok.m4a": b"original hires",     # volumen bien, pero 24/192
         "cancion.mp3": b"original mp3",        # con perdida -> no se toca
+        "grabacion-ok.wav": b"original wav",    # suena bien, pero ocupa de mas
     }
     for nombre, contenido in ficheros.items():
         (BANCO / nombre).write_bytes(contenido)
@@ -92,18 +99,30 @@ lineas = []
 stats = normalize_library(config(), lineas.append)
 print("\n".join(lineas))
 print()
-assert stats.revisadas == 3, stats.revisadas          # las 3 sin perdida
-assert stats.normalizadas == 2, stats.normalizadas    # la baja y la hi-res
+assert stats.revisadas == 4, stats.revisadas          # las 4 sin perdida
+assert stats.normalizadas == 3, stats.normalizadas    # baja, hi-res y el wav
 assert stats.bajadas == 1, stats.bajadas              # solo la hi-res
+assert stats.a_alac == 1, stats.a_alac                # solo el wav
 assert stats.ya_estaban == 1, stats.ya_estaban        # cancion-ok
 assert stats.saltadas == 3, stats.saltadas            # mp3, inexistente, nube
 assert (BANCO / "baja.m4a").read_bytes() != b"original baja", "deberia reescribirse"
 assert (BANCO / "cancion-ok.m4a").read_bytes() == b"original ok", "no se toca"
 assert (BANCO / "cancion.mp3").read_bytes() == b"original mp3", "mp3 intacto"
-print("1. arregla lo que hace falta y deja lo demas en paz")
+
+# El WAV pasa a ALAC: cambia la extension, asi que iTunes tiene que quedarse
+# apuntando al fichero nuevo y el viejo desaparecer.
+assert (BANCO / "grabacion-ok.m4a").is_file(), "deberia haber salido un .m4a"
+assert not (BANCO / "grabacion-ok.wav").exists(), "el wav viejo sobra"
+wav = [c for c in LibreriaFalsa.canciones if c.Location.endswith(".m4a")
+       and "grabacion" in c.Location]
+assert wav, [c.Location for c in LibreriaFalsa.canciones]
+print("1. arregla lo que hace falta, pasa el wav a ALAC y reapunta iTunes")
 
 # --- 2. la hi-res se baja a calidad CD --------------------------------------
 montar()
+# Solo la hi-res, para que la ultima orden sea la suya y no dependa del orden.
+LibreriaFalsa.canciones = [c for c in LibreriaFalsa.canciones
+                          if "hires" in c.Location]
 lineas = []
 normalize_library(config(), lineas.append)
 orden = (AQUI / "ultimo-comando.txt").read_text(encoding="utf-8").splitlines()
@@ -117,21 +136,21 @@ stats = normalize_library(config(flac_cd_quality=False), lambda m: None)
 print("3. sin bajar calidad -> normalizadas:", stats.normalizadas,
       "| bajadas:", stats.bajadas)
 assert stats.bajadas == 0, stats.bajadas
-assert stats.normalizadas == 1, "solo la de volumen bajo"
+assert stats.normalizadas == 2, "la de volumen bajo y el wav a ALAC"
 assert (BANCO / "hires-ok.m4a").read_bytes() == b"original hires", "no se toca"
 
 # --- 4. tambien los formatos con perdida ------------------------------------
 montar()
 stats = normalize_library(config(library_include_lossy=True), lambda m: None)
 print("4. con los MP3 -> revisadas:", stats.revisadas, "| saltadas:", stats.saltadas)
-assert stats.revisadas == 4, stats.revisadas
+assert stats.revisadas == 5, stats.revisadas
 assert (BANCO / "cancion.mp3").read_bytes() != b"original mp3", "ahora si se toca"
 
 # --- 5. simulacion -----------------------------------------------------------
 montar()
 stats = normalize_library(config(dry_run=True), lambda m: None)
 print("5. simulacion -> diria que arregla", stats.normalizadas)
-assert stats.normalizadas == 2, stats.normalizadas
+assert stats.normalizadas == 3, stats.normalizadas
 assert (BANCO / "baja.m4a").read_bytes() == b"original baja", "no debe escribir"
 
 # --- 6. si ffmpeg falla, el original no se pierde ---------------------------
@@ -144,7 +163,7 @@ finally:
     os.environ.pop("FALLA_TODO", None)
 print("6. con ffmpeg fallando -> fallidas:", len(stats.fallidas))
 assert stats.normalizadas == 0, stats.normalizadas
-assert len(stats.fallidas) == 2, stats.fallidas
+assert len(stats.fallidas) == 3, stats.fallidas
 assert (BANCO / "baja.m4a").read_bytes() == b"original baja", "el original sigue ahi"
 assert not list(BANCO.glob(".*normalizando*")), "no debe dejar temporales"
 
@@ -153,7 +172,7 @@ canciones = montar()
 stats = normalize_library(config(), lambda m: None)
 tocadas = [c for c in canciones if c.refrescada]
 print("7. se le dice a iTunes que relea:", len(tocadas), "canciones")
-assert len(tocadas) == 2, [c.Location for c in tocadas]
+assert len(tocadas) == 3, [c.Location for c in tocadas]
 assert stats.sin_refrescar == 0, stats.sin_refrescar
 
 # Y si iTunes no puede releerlo, se dice en vez de callarlo: si no, seguiria
@@ -164,7 +183,7 @@ for c in canciones:
 lineas = []
 stats = normalize_library(config(), lineas.append)
 print("   si iTunes no puede:", stats.sin_refrescar, "avisadas")
-assert stats.sin_refrescar == 2, stats.sin_refrescar
+assert stats.sin_refrescar == 3, stats.sin_refrescar
 assert any("no ha releido" in l for l in lineas), lineas
 assert "sin releer en iTunes" in stats.summary(), stats.summary()
 

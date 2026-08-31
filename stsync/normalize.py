@@ -47,6 +47,7 @@ class LibraryStats:
     revisadas: int = 0
     normalizadas: int = 0
     bajadas: int = 0            # ademas, pasadas a calidad CD
+    a_alac: int = 0             # ademas, convertidas de WAV/FLAC a ALAC
     ya_estaban: int = 0
     saltadas: int = 0           # sin fichero, o formato que no se toca
     sin_refrescar: int = 0      # cambiadas, pero iTunes no releyo sus datos
@@ -55,7 +56,8 @@ class LibraryStats:
     def summary(self) -> str:
         texto = (f"Biblioteca: {self.revisadas} revisadas | "
                  f"{self.normalizadas} normalizadas ({self.bajadas} ademas "
-                 f"bajadas a calidad CD) | {self.ya_estaban} ya estaban bien | "
+                 f"bajadas a calidad CD, {self.a_alac} pasadas a ALAC) | "
+                 f"{self.ya_estaban} ya estaban bien | "
                  f"{self.saltadas} sin tocar")
         if self.fallidas:
             texto += f" | {len(self.fallidas)} con error"
@@ -75,7 +77,7 @@ def normalize_library(cfg: Config, log: Callable[[str], None],
     if not ffmpeg:
         raise ConvertError(
             "No se encuentra ffmpeg. Instalalo con 'winget install Gyan.FFmpeg' "
-            "o indica su ruta en la pestana FLAC a ALAC.")
+            "o indica su ruta en la pestana Convertir a ALAC.")
     ffprobe = _buscar_ffprobe(ffmpeg)
     if not ffprobe:
         raise ConvertError(
@@ -142,7 +144,11 @@ def _revisar(track: Any, ffmpeg: str, ffprobe: str, cfg: Config,
     ahora = volumen_actual(medida)
     fuera = ahora is None or not (minimo <= ahora <= maximo)
     bajar = a_cd and supera_calidad_cd(audio)
-    if not fuera and not bajar:
+    # Un WAV o un FLAC guardan lo mismo que un ALAC ocupando bastante mas, y
+    # ademas iTunes no lee el FLAC: pasarlos merece la pena aunque suenen bien.
+    a_alac = bool(cfg.get("library_to_alac", True)) and codec in SIN_PERDIDA \
+        and codec != "alac"
+    if not fuera and not bajar and not a_alac:
         stats.ya_estaban += 1
         return
 
@@ -151,14 +157,20 @@ def _revisar(track: Any, ffmpeg: str, ffprobe: str, cfg: Config,
         motivos.append(f"{ahora if ahora is not None else '?'} LUFS")
     if bajar:
         motivos.append(f"{audio.get('rate')} Hz / {audio.get('bits')} bits")
+    if a_alac:
+        motivos.append(f"{codec} a alac")
     log(f"  ~ {fichero.name}  ({', '.join(motivos)})")
 
     if cfg.dry_run:
         stats.normalizadas += 1
         stats.bajadas += bool(bajar)
+        stats.a_alac += bool(a_alac)
         return
 
-    error = _reescribir(ffmpeg, fichero, codec_args, medida, bajar)
+    if a_alac:
+        error = _convertir_a_alac(ffmpeg, fichero, track, medida, bajar, log)
+    else:
+        error = _reescribir(ffmpeg, fichero, codec_args, medida, bajar)
     if error:
         log(f"      no se pudo: {error}")
         stats.fallidas.append((fichero.name, error))
@@ -166,6 +178,7 @@ def _revisar(track: Any, ffmpeg: str, ffprobe: str, cfg: Config,
 
     stats.normalizadas += 1
     stats.bajadas += bool(bajar)
+    stats.a_alac += bool(a_alac)
 
     # iTunes se queda con lo que anoto el dia que la importo: si no se le dice
     # que relea el fichero, sigue ensenando los kbps y el tamano de antes.
@@ -188,6 +201,61 @@ def _fichero_de(track: Any) -> Path | None:
         return None
     fichero = Path(ruta)
     return fichero if fichero.is_file() else None
+
+
+def _convertir_a_alac(ffmpeg: str, fichero: Path, track: Any,
+                      medida: dict[str, str] | None, bajar: bool,
+                      log: Callable[[str], None]) -> str:
+    """Pasa la cancion a ALAC y le dice a iTunes donde esta ahora.
+
+    Aqui cambia la extension, asi que no basta con sustituir el fichero: si no
+    se le reapunta, iTunes se queda buscando un .wav que ya no existe y la
+    cancion aparece con la exclamacion. Por eso el original no se borra hasta
+    que iTunes ha aceptado la ruta nueva.
+    """
+    nuevo = _nombre_libre(fichero.with_suffix(".m4a"))
+    orden = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+             "-i", str(fichero), "-map", "0", "-c:v", "copy",
+             "-af", loudnorm_con(medida), "-c:a", "alac"]
+    if bajar:
+        orden += ["-ar", str(CD_RATE), "-sample_fmt", CD_FORMAT]
+    orden += ["-map_metadata", "0", "-movflags", "+faststart", str(nuevo)]
+
+    try:
+        salida = subprocess.run(orden, capture_output=True, text=True,
+                                encoding="utf-8", errors="replace",
+                                timeout=TIMEOUT_S, creationflags=NO_WINDOW)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        nuevo.unlink(missing_ok=True)
+        return str(exc)
+
+    if salida.returncode != 0 or not nuevo.is_file() or nuevo.stat().st_size == 0:
+        detalle = (salida.stderr or "").strip().splitlines()
+        nuevo.unlink(missing_ok=True)
+        return detalle[-1] if detalle else "ffmpeg fallo"
+
+    try:
+        track.Location = str(nuevo)
+    except Exception as exc:  # noqa: BLE001 - iTunes puede no dejarse
+        nuevo.unlink(missing_ok=True)
+        return f"iTunes no ha aceptado la ruta nueva ({exc})"
+
+    # Ya apunta al nuevo: el viejo sobra. Si no se puede borrar tampoco pasa
+    # nada grave, solo ocupa; se avisa y se sigue.
+    try:
+        fichero.unlink()
+    except OSError as exc:
+        log(f"      convertida, pero el {fichero.suffix} viejo sigue ahi: {exc}")
+    return ""
+
+
+def _nombre_libre(destino: Path) -> Path:
+    """Un nombre que no pise nada de lo que ya haya en esa carpeta."""
+    candidato, numero = destino, 2
+    while candidato.exists():
+        candidato = destino.with_name(f"{destino.stem} ({numero}){destino.suffix}")
+        numero += 1
+    return candidato
 
 
 def _reescribir(ffmpeg: str, fichero: Path, codec_args: list[str],

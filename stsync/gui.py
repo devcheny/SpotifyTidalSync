@@ -128,7 +128,7 @@ class App(tk.Tk):
         notebook.add(self.tab_main, text="Sincronizacion")
         if self.itunes_ok:
             notebook.add(self.tab_itunes, text="iTunes")
-            notebook.add(self.tab_flac, text="FLAC a ALAC")
+            notebook.add(self.tab_flac, text="Convertir a ALAC")
         notebook.add(self.tab_settings, text="Ajustes")
 
         self._build_main_tab()
@@ -460,17 +460,19 @@ class App(tk.Tk):
         self._set_itunes_playlists(sorted(every), checked=marked or set(names))
         self._append(f"{len(names)} playlists leidas de TIDAL.", "ok")
 
-    # -- pestana FLAC a ALAC -------------------------------------------------
+    # -- pestana Convertir a ALAC -------------------------------------------------
     def _build_flac_tab(self) -> None:
         intro = ttk.Frame(self.tab_flac, style="Card.TFrame", padding=14)
         intro.pack(fill="x")
-        ttk.Label(intro, text="Convertir FLAC a ALAC",
+        ttk.Label(intro, text="Convertir a ALAC",
                   style="Head.TLabel").pack(anchor="w")
-        ttk.Label(intro, text="iTunes no sabe leer FLAC: lo que dejas en la "
-                              "carpeta de auto-anadir acaba en su subcarpeta "
-                              "'No anadido'. Esto busca los FLAC ahi dentro, los "
-                              "convierte a ALAC y deja el .m4a en la raiz de la "
-                              "carpeta, que es donde iTunes si los recoge solo.",
+        ttk.Label(intro, text="iTunes no sabe leer FLAC, y un WAV si lo lee "
+                              "pero ocupa el triple. Esto busca en la carpeta de "
+                              "auto-anadir todo lo que sea sin perdida (FLAC, "
+                              "WAV, AIFF...), lo convierte a ALAC y deja el .m4a "
+                              "en la raiz, que es donde iTunes lo recoge solo. "
+                              "Los MP3 no se tocan: pasarlos a ALAC no les "
+                              "devolveria la calidad que ya perdieron.",
                   style="Muted.TLabel", wraplength=740,
                   justify="left").pack(anchor="w", pady=(2, 10))
         self.flac_status = tk.Label(intro, text="", bg=CARD, fg=MUTED,
@@ -566,6 +568,13 @@ class App(tk.Tk):
                              "biblioteca grande tarda un buen rato.",
                   style="Muted.TLabel", wraplength=740,
                   justify="left").pack(anchor="w", pady=(2, 8))
+
+        alac = tk.BooleanVar(value=bool(self.cfg.get("library_to_alac", True)))
+        self.vars["library_to_alac"] = alac
+        ttk.Checkbutton(caja, variable=alac,
+                        text="Pasar a ALAC los WAV y FLAC que ya esten en la "
+                             "biblioteca (mismo sonido, la mitad de espacio)"
+                        ).pack(anchor="w")
 
         var = tk.BooleanVar(value=bool(self.cfg.get("library_include_lossy")))
         self.vars["library_include_lossy"] = var

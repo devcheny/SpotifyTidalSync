@@ -10,8 +10,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-rem Convierte a ALAC los FLAC de la carpeta de auto-anadir de iTunes.
-rem La carpeta y las opciones se configuran en la pestana "FLAC a ALAC".
+rem Convierte a ALAC lo que haya sin perdida (FLAC, WAV, AIFF...) en la
+rem carpeta de auto-anadir. Se configura en la pestana "Convertir a ALAC".
 ".venv\Scripts\python.exe" "main.py" --flac2alac
 echo.
 pause
