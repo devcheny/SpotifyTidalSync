@@ -19,9 +19,12 @@ if any("print_format=json" in a for a in args):
     if os.environ.get("MEDICION_ROTA"):
         print("no se ha podido medir", file=sys.stderr)
         sys.exit(1)
+    # El volumen sale del nombre: "-ok" ya esta en su sitio, el resto no.
+    entrada = args[args.index("-i") + 1] if "-i" in args else ""
+    nivel = "-9.0" if "-ok" in os.path.basename(entrada).lower() \
+        else os.environ.get("MEDIDA_FALSA", "-16.55")
     print("[Parsed_loudnorm_0 @ 000] \n{", file=sys.stderr)
-    print(f'  "input_i" : "{os.environ.get("MEDIDA_FALSA", "-16.55")}",',
-          file=sys.stderr)
+    print(f'  "input_i" : "{nivel}",', file=sys.stderr)
     print('  "input_tp" : "-2.06",', file=sys.stderr)
     print('  "input_lra" : "6.20",', file=sys.stderr)
     print('  "input_thresh" : "-27.15",', file=sys.stderr)

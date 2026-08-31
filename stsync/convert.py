@@ -20,7 +20,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from .config import Config
 
@@ -342,6 +342,47 @@ def _buscar_ffprobe(ffmpeg: str) -> str | None:
     if hermano.is_file():
         return str(hermano)
     return shutil.which("ffprobe")
+
+
+def leer_audio(ffprobe: str, source: Path) -> dict[str, Any]:
+    """Como esta grabada la cancion: codec, frecuencia y bits por muestra.
+
+    Hace falta para saber si merece la pena bajarla a calidad CD y para volver
+    a guardarla en su mismo formato.
+    """
+    orden = [ffprobe, "-v", "quiet", "-print_format", "json", "-show_streams",
+             "-select_streams", "a:0", str(source)]
+    try:
+        salida = subprocess.run(orden, capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=60,
+                                creationflags=NO_WINDOW)
+        streams = json.loads(salida.stdout or "{}").get("streams") or []
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return {}
+    if not streams:
+        return {}
+
+    stream = streams[0]
+    bits = stream.get("bits_per_raw_sample") or stream.get("bits_per_sample")
+    return {
+        "codec": str(stream.get("codec_name") or ""),
+        "rate": _entero(stream.get("sample_rate")),
+        # Un s16p sin mas dato es de 16 bits; si no se sabe, se deja en 0.
+        "bits": _entero(bits) or (16 if "s16" in str(stream.get("sample_fmt")) else 0),
+    }
+
+
+def _entero(valor: Any) -> int:
+    try:
+        return int(valor)
+    except (TypeError, ValueError):
+        return 0
+
+
+def supera_calidad_cd(audio: dict[str, Any]) -> bool:
+    """True si esta por encima de 16 bits / 44,1 kHz y se puede bajar."""
+    return bool(audio) and (audio.get("rate", 0) > CD_RATE
+                            or audio.get("bits", 0) > 16)
 
 
 def _leer_tags(ffprobe: str, source: Path) -> dict[str, str]:

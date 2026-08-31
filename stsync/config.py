@@ -42,6 +42,9 @@ DEFAULTS: dict[str, Any] = {
     "flac_keep_artwork": True,        # copiar la caratula al .m4a si la trae
     "flac_delete_source": True,       # borrar el FLAC tras convertirlo bien
     "ffmpeg_path": "",                # vacio = buscarlo en el PATH
+    "library_min_lufs": -9.5,         # margen que se da por bueno al
+    "library_max_lufs": -8.5,         # repasar toda la biblioteca
+    "library_include_lossy": False,   # tocar tambien MP3 y demas
     "flac_after_sync": False,         # convertir al terminar la sincronizacion
     "flac_schedule_time": "04:00",    # o repaso propio, una hora despues
 
