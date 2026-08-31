@@ -506,6 +506,9 @@ class App(tk.Tk):
              "24/192 sale a 9216 kbps y ocupa 6 veces mas"),
             ("flac_normalize",
              "Normalizar el volumen (loudnorm, como el flac2alac.bat de siempre)"),
+            ("flac_two_pass",
+             "Medir el volumen antes de normalizar: tarda el doble pero clava "
+             "el nivel en vez de quedarse cerca"),
             ("flac_complete_tags",
              "Completar el artista y el titulo que falten, sacandolos del "
              "nombre del fichero ('Artista - Titulo.flac')"),

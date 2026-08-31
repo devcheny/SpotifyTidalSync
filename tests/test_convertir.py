@@ -176,6 +176,33 @@ print("  con el ajuste apagado  ->", metadatos(args))
 assert metadatos(args) == {}, metadatos(args)
 print()
 
+# --- 8. Normalizar midiendo primero -----------------------------------------
+print("===== dos pasadas =====")
+args = convertir_uno("Xiyo - Do You Remember.flac")
+filtro = args[args.index("-af") + 1]
+print("  filtro con medida :", filtro[:64] + "...")
+assert "measured_I=-16.55" in filtro, filtro
+assert "linear=true" in filtro, filtro
+
+args = convertir_uno("Xiyo - Do You Remember.flac", flac_two_pass=False)
+filtro = args[args.index("-af") + 1]
+print("  a una pasada      :", filtro)
+assert filtro == "loudnorm=I=-9:TP=-1.5:LRA=11", filtro
+
+os.environ["MEDICION_ROTA"] = "1"
+try:
+    args = convertir_uno("Xiyo - Do You Remember.flac")
+finally:
+    os.environ.pop("MEDICION_ROTA", None)
+filtro = args[args.index("-af") + 1]
+print("  si la medida falla:", filtro, "(sigue convirtiendo)")
+assert filtro == "loudnorm=I=-9:TP=-1.5:LRA=11", filtro
+
+args = convertir_uno("Xiyo - Do You Remember.flac", flac_normalize=False)
+print("  sin normalizar    :", "-af" not in args)
+assert "-af" not in args, args
+print()
+
 shutil.rmtree(RAIZ)
 print()
 print("TODOS LOS ESCENARIOS OK")

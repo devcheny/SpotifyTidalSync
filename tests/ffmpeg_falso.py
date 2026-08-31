@@ -11,6 +11,24 @@ from pathlib import Path
 args = sys.argv[1:]
 salida = args[-1]
 
+# La pasada de medicion no convierte nada: suelta el JSON por stderr, como el
+# ffmpeg de verdad, y se acaba ahi. MEDIDA_FALSA dice que volumen tiene.
+if any("print_format=json" in a for a in args):
+    Path(__file__).with_name("ultima-medicion.txt").write_text(
+        "\n".join(args), encoding="utf-8")
+    if os.environ.get("MEDICION_ROTA"):
+        print("no se ha podido medir", file=sys.stderr)
+        sys.exit(1)
+    print("[Parsed_loudnorm_0 @ 000] \n{", file=sys.stderr)
+    print(f'  "input_i" : "{os.environ.get("MEDIDA_FALSA", "-16.55")}",',
+          file=sys.stderr)
+    print('  "input_tp" : "-2.06",', file=sys.stderr)
+    print('  "input_lra" : "6.20",', file=sys.stderr)
+    print('  "input_thresh" : "-27.15",', file=sys.stderr)
+    print('  "target_offset" : "0.29"', file=sys.stderr)
+    print("}", file=sys.stderr)
+    sys.exit(0)
+
 registro = Path(__file__).with_name("ultimo-comando.txt")
 registro.write_text("\n".join(args), encoding="utf-8")
 

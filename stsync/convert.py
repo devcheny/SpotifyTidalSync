@@ -24,8 +24,14 @@ from typing import Callable
 
 from .config import Config
 
-# Misma normalizacion que el .bat original: deja la musica bastante alta.
+# Misma normalizacion que el .bat original y que NormalizeLibrary.ps1: deja la
+# musica bastante alta. I es el volumen al que se quiere llegar (LUFS), TP el
+# techo de pico y LRA cuanto margen se deja entre lo bajo y lo alto.
 LOUDNORM = "loudnorm=I=-9:TP=-1.5:LRA=11"
+
+# De la medicion previa salen estos cinco datos, que es lo que convierte a
+# loudnorm en preciso: sin ellos trabaja sobre la marcha y se queda cerca.
+MEDIDAS = ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")
 
 # Calidad CD: 16 bits a 44,1 kHz, o sea los 1411 kbps de toda la vida. El
 # codificador ALAC trabaja con muestras planares, de ahi la "p" de s16p.
@@ -163,7 +169,11 @@ class FlacConverter:
             return
 
         keep_art = bool(self.cfg.get("flac_keep_artwork", True))
-        result = self._run_ffmpeg(ffmpeg, source, target, keep_art)
+        medida = None
+        if self.cfg.get("flac_normalize", True) and \
+                self.cfg.get("flac_two_pass", True):
+            medida = medir_volumen(ffmpeg, source, self.log)
+        result = self._run_ffmpeg(ffmpeg, source, target, keep_art, medida)
         if result.returncode != 0 and keep_art:
             # La causa mas comun de fallo es una caratula que no entra en el
             # .m4a, asi que antes de darlo por perdido se prueba sin ella.
@@ -183,7 +193,8 @@ class FlacConverter:
         self._retire(source, folder)
 
     def _run_ffmpeg(self, ffmpeg: str, source: Path, target: Path,
-                    keep_art: bool) -> subprocess.CompletedProcess[str]:
+                    keep_art: bool, medida: dict[str, str] | None = None
+                    ) -> subprocess.CompletedProcess[str]:
         command = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
                    "-i", str(source), "-map", "0:a:0"]
         if keep_art:
@@ -199,7 +210,7 @@ class FlacConverter:
             # barbaridad; a 16/44,1 son los 1411 kbps de un CD.
             command += ["-ar", str(CD_RATE), "-sample_fmt", CD_FORMAT]
         if self.cfg.get("flac_normalize", True):
-            command += ["-af", LOUDNORM]
+            command += ["-af", loudnorm_con(medida)]
         command += ["-movflags", "+faststart", str(target)]
 
         try:
@@ -268,6 +279,61 @@ class FlacConverter:
                 self.stats.cleaned_dirs += 1
             except OSError:
                 pass
+
+
+def medir_volumen(ffmpeg: str, source: Path,
+                  log: Callable[[str], None] | None = None) -> dict[str, str] | None:
+    """Analiza el fichero y devuelve lo que loudnorm necesita saber de el.
+
+    Es la primera de las dos pasadas: aqui no se convierte nada, solo se mide.
+    Devuelve None si la medicion no sale, y entonces se normaliza a la antigua.
+    """
+    orden = [ffmpeg, "-hide_banner", "-nostats", "-i", str(source),
+             "-af", f"{LOUDNORM}:print_format=json", "-f", "null", "-"]
+    try:
+        salida = subprocess.run(orden, capture_output=True, text=True,
+                                encoding="utf-8", errors="replace",
+                                timeout=TIMEOUT_S, creationflags=NO_WINDOW)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+    # El JSON sale por stderr, al final de todo lo que ffmpeg va contando.
+    texto = salida.stderr or ""
+    abre, cierra = texto.rfind("{"), texto.rfind("}")
+    if abre < 0 or cierra < abre:
+        return None
+    try:
+        datos = json.loads(texto[abre:cierra + 1])
+    except ValueError:
+        return None
+
+    medida = {clave: str(datos[clave]) for clave in MEDIDAS if clave in datos}
+    if len(medida) != len(MEDIDAS):
+        return None
+    if log:
+        log(f"      medido: {medida['input_i']} LUFS")
+    return medida
+
+
+def loudnorm_con(medida: dict[str, str] | None) -> str:
+    """El filtro de normalizacion, afinado con la medicion si la hay."""
+    if not medida:
+        return LOUDNORM
+    return (f"{LOUDNORM}"
+            f":measured_I={medida['input_i']}"
+            f":measured_TP={medida['input_tp']}"
+            f":measured_LRA={medida['input_lra']}"
+            f":measured_thresh={medida['input_thresh']}"
+            f":offset={medida['target_offset']}"
+            f":linear=true")
+
+
+def volumen_actual(medida: dict[str, str] | None) -> float | None:
+    """Los LUFS que tiene ahora mismo, para saber si hace falta tocarlo."""
+    try:
+        return float((medida or {})["input_i"])
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def _buscar_ffprobe(ffmpeg: str) -> str | None:
