@@ -1,9 +1,0 @@
--hide_banner
--nostats
--i
-C:\Users\DevCheny\Documents\flutter_dev\flutter_dev\SpotifyTidalSync\tests\prueba-flac\Anadir automaticamente a iTunes\Xiyo - Do You Remember.flac
--af
-loudnorm=I=-9:TP=-1.5:LRA=11:print_format=json
--f
-null
--
