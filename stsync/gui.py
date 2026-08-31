@@ -19,6 +19,7 @@ from .convert import DONE_DIR, ConvertError, FlacConverter
 from .convert import diagnose as flac_diagnose
 from .http import ApiError
 from .itunes import ITunesError, complete_tags
+from .normalize import normalize_library
 from .itunes import diagnose as itunes_diagnose
 from .oauth import OAuthError
 from .paths import app_dir, latest_report
@@ -547,8 +548,68 @@ class App(tk.Tk):
         self.try_flac_button.pack(side="left", padx=(8, 0))
         ttk.Button(row, text="Guardar ajustes",
                    command=self._save_settings).pack(side="left", padx=(8, 0))
+
+        self._build_library_box()
         self._refresh_flac_status()
         self._refresh_flac_schedule()
+
+    # -- repaso de la biblioteca (cosa de una vez) ----------------------------
+    def _build_library_box(self) -> None:
+        caja = ttk.Frame(self.tab_flac, style="Card.TFrame", padding=14)
+        caja.pack(fill="x")
+        ttk.Label(caja, text="Repasar toda la biblioteca  (se hace una vez)",
+                  style="Head.TLabel").pack(anchor="w")
+        ttk.Label(caja, text="Mide cancion por cancion y arregla solo las que lo "
+                             "necesitan: las que se salen del volumen y, si arriba "
+                             "esta marcada la calidad CD, las que esten grabadas "
+                             "por encima. Lo que ya esta bien no se toca. Con una "
+                             "biblioteca grande tarda un buen rato.",
+                  style="Muted.TLabel", wraplength=740,
+                  justify="left").pack(anchor="w", pady=(2, 8))
+
+        var = tk.BooleanVar(value=bool(self.cfg.get("library_include_lossy")))
+        self.vars["library_include_lossy"] = var
+        ttk.Checkbutton(caja, variable=var,
+                        text="Incluir tambien MP3 y demas formatos con perdida "
+                             "(hay que recomprimirlos y pierden algo de calidad)"
+                        ).pack(anchor="w")
+
+        fila = ttk.Frame(caja, style="Card.TFrame")
+        fila.pack(anchor="w", pady=(10, 0))
+        self.library_button = ttk.Button(fila, text="Repasar la biblioteca",
+                                         command=self._start_library)
+        self.library_button.pack(side="left")
+        self.try_library_button = ttk.Button(
+            fila, text="Probar", width=8,
+            command=lambda: self._start_library(simular=True))
+        self.try_library_button.pack(side="left", padx=(8, 0))
+
+    def _start_library(self, simular: bool = False) -> None:
+        if self.worker and self.worker.is_alive():
+            return
+        if not self._save_settings(silent=True):
+            return
+        if not simular and not self.cfg.dry_run and not messagebox.askyesno(
+                "Repasar la biblioteca",
+                "Se van a reescribir las canciones que hagan falta de tu "
+                "biblioteca de iTunes.\n\n"
+                "Cada una se convierte aparte y solo se sustituye si sale bien, "
+                "pero es una pasada larga y sobre tus ficheros.\n\n"
+                "¿Has probado antes con el boton Probar?"):
+            return
+        self._lanzar(self._library_worker, simular)
+
+    def _library_worker(self, simular: bool = False) -> None:
+        try:
+            stats = normalize_library(self._config_para(simular), self._q_log,
+                                      self.stop_flag.is_set)
+            self.queue.put(("ok", stats.summary()))
+        except (ConvertError, ITunesError) as exc:
+            self.queue.put(("error", str(exc)))
+        except Exception as exc:  # noqa: BLE001
+            self.queue.put(("error", f"Error inesperado: {exc}"))
+        finally:
+            self.queue.put(("done", None))
 
     def _refresh_flac_schedule(self) -> None:
         exists = scheduler.task_exists(scheduler.FLAC)
@@ -1089,13 +1150,15 @@ class App(tk.Tk):
 
     def _set_busy(self, busy: bool) -> None:
         for boton in (self.try_sync_button, self.try_itunes_button,
-                      self.try_fix_button, self.try_flac_button):
+                      self.try_fix_button, self.try_flac_button,
+                      self.try_library_button):
             boton.configure(state="disabled" if busy else "normal")
         self.sync_button.configure(state="disabled" if busy else "normal")
         self.itunes_button.configure(state="disabled" if busy else "normal")
         self.itunes_load_button.configure(state="disabled" if busy else "normal")
         self.fix_button.configure(state="disabled" if busy else "normal")
         self.flac_button.configure(state="disabled" if busy else "normal")
+        self.library_button.configure(state="disabled" if busy else "normal")
         self.update_button.configure(state="disabled" if busy else "normal")
         self.sp_button.configure(state="disabled" if busy else "normal")
         self.td_button.configure(state="disabled" if busy else "normal")

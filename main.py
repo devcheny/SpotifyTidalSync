@@ -8,6 +8,7 @@
   python main.py --buscar "hay que venir"  -> por que no casa esa cancion
   python main.py --version  -> version instalada y si hay una mas nueva
   python main.py --actualizar -> se baja la ultima release de GitHub
+  python main.py --biblioteca -> repasa el volumen de toda la biblioteca
   python main.py --status   -> muestra el estado actual
   python main.py --schedule 03:00 / --unschedule
   python main.py --schedule-flac 04:00 / --unschedule-flac
@@ -23,6 +24,7 @@ from stsync.config import Config
 from stsync.convert import ConvertError, FlacConverter
 from stsync.http import ApiError
 from stsync.itunes import ITunesError, inspect_track
+from stsync.normalize import normalize_library
 from stsync.oauth import OAuthError
 from stsync.paths import app_dir, log_file
 from stsync.store import StateStore, TokenStore
@@ -106,6 +108,21 @@ def run_flac2alac() -> int:
         FlacConverter(Config.load(), log).run()
         return 0
     except ConvertError as exc:
+        log(f"ERROR: {exc}")
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        log(f"ERROR inesperado: {exc}")
+        return 2
+    finally:
+        handle.close()
+
+
+def run_library() -> int:
+    log, handle = _file_logger()
+    try:
+        normalize_library(Config.load(), log)
+        return 0
+    except (ConvertError, ITunesError) as exc:
         log(f"ERROR: {exc}")
         return 1
     except Exception as exc:  # noqa: BLE001
@@ -213,6 +230,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="version instalada y si hay una mas nueva")
     parser.add_argument("--actualizar", action="store_true",
                         help="instala la ultima release de GitHub")
+    parser.add_argument("--biblioteca", action="store_true",
+                        help="repasa el volumen de toda la biblioteca")
     parser.add_argument("--status", action="store_true",
                         help="muestra el estado y sale")
     parser.add_argument("--schedule", metavar="HH:MM",
@@ -256,6 +275,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if ok else 1
     if args.flac2alac:
         return run_flac2alac()
+    if args.biblioteca:
+        return run_library()
     if args.itunes or args.playlist:
         return run_sync(itunes_only=True, playlist=args.playlist)
     if args.sync:

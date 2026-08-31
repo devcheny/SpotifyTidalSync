@@ -256,6 +256,29 @@ nada:
 Al terminar borra las carpetas vacías que quedan dentro (`No añadido\<fecha>\`).
 Con *Modo simulación* te dice qué convertiría sin tocar nada.
 
+### Repasar toda la biblioteca
+
+Botón **Repasar la biblioteca**, en esa misma pestaña. Es el trabajo que hacía
+`NormalizeLibrary.ps1`, pero **sin duplicar la biblioteca en otra carpeta** y
+midiendo antes de tocar: cada canción se analiza y solo se reescribe si su
+volumen se sale del margen (−9,5 a −8,5 LUFS) o si está grabada por encima de la
+calidad CD y esa casilla está marcada. Lo que ya está bien no se toca.
+
+Se hace **una vez y se olvida**: lo que entre después ya sale normalizado del
+conversor. Con una biblioteca grande tarda un buen rato, porque mide canción por
+canción.
+
+Cómo se protege lo tuyo, que aquí se reescriben ficheros de verdad:
+
+- Los **formatos con pérdida** (MP3, AAC, WMA) se saltan por defecto: volver a
+  comprimirlos los degrada. Hay una casilla para incluirlos si te da igual.
+- Cada canción se convierte **a un temporal** y solo entonces se sustituye la
+  original, así que un fallo a medias no deja nada destrozado.
+- Lo que no sea un fichero local (nube, CD) ni se mira.
+- El botón **Probar** de al lado lo mide todo y te dice qué haría, sin escribir.
+
+También `python main.py --biblioteca`.
+
 ### Que lo revise solo una vez al día
 
 Dos formas, y puedes usar la que prefieras:
