@@ -53,9 +53,11 @@ DEFAULTS: dict[str, Any] = {
     # --- Publicar en Spotify y TIDAL las listas de iTunes ---
     "publish_to_spotify": True,       # replicar en Spotify
     "publish_to_tidal": False,        # replicar en TIDAL (solo lo que tenga ISRC)
-    "publish_playlists": [],          # que playlists de iTunes se llevan
+    "publish_playlists": [],          # que playlists de iTunes se llevan fuera
+    "publish_import": [],             # cuales se traen de vuelta desde Spotify
     "publish_public": [],             # cuales de esas quedan publicas
     "publish_prefix": "iTunes - ",    # asi se distinguen de las demas
+    "publish_missing_playlist": True, # dejar en Spotify "<lista> - Faltantes en iTunes"
 
     # --- Actualizaciones (para repartir la app entre conocidos) ---
     "github_repo": "devcheny/SpotifyTidalSync",   # de donde salen las versiones

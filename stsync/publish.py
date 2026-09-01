@@ -1,4 +1,4 @@
-"""Llevar las playlists de iTunes a Spotify y TIDAL.
+"""Llevar las playlists de iTunes a Spotify y TIDAL, y traerlas de vuelta.
 
 Al reves de lo que hace itunes.py: aqui se parte de una lista local y se busca
 cada cancion en el servicio para crear alli la misma lista.
@@ -10,6 +10,15 @@ Hay una diferencia grande entre los dos destinos, y conviene saberla:
   si se conoce su ISRC. iTunes no lo da, pero muchos ficheros lo llevan en sus
   etiquetas y de ahi se saca con ffprobe. Las que no lo traigan se quedaran
   fuera de TIDAL y se apuntan en el informe.
+
+Cada lista elegida puede ir en un sentido o en los dos:
+
+- **llevar** (iTunes -> fuera): lo de siempre, y el unico sentido posible para
+  las listas inteligentes y para TIDAL.
+- **traer** (Spotify -> iTunes): lo que hayas anadido en Spotify se busca en la
+  biblioteca local y se mete en la misma lista de iTunes. Lo que no tengas se
+  queda apuntado en una lista aparte de Spotify, "<lista> - Faltantes en
+  iTunes", que la sincronizacion con TIDAL ignora a proposito.
 """
 from __future__ import annotations
 
@@ -21,7 +30,8 @@ from typing import Any, Callable
 from .config import Config
 from .convert import _buscar_ffprobe, _leer_tags, find_ffmpeg
 from .http import ApiError
-from .itunes import ITunesError, ITunesLibrary, _com_items
+from .itunes import (ITunesError, ITunesLibrary, LibraryIndex, _add_track,
+                     _com_items, _is_missing_list)
 from .model import Track, normalize
 from .spotify import SpotifyClient
 from .store import StateStore, TokenStore
@@ -38,7 +48,9 @@ NEGATIVE_TTL = 30 * 24 * 3600
 class PublishStats:
     playlists: int = 0
     creadas: int = 0
-    anadidas: int = 0
+    anadidas: int = 0       # canciones que han salido de iTunes
+    traidas: int = 0        # canciones que han entrado en iTunes desde Spotify
+    faltantes: int = 0      # estan en Spotify pero no en tu biblioteca
     sin_equivalencia: list[tuple[str, str, str]] = field(default_factory=list)
     fallidas: list[tuple[str, str]] = field(default_factory=list)
 
@@ -46,6 +58,9 @@ class PublishStats:
         texto = (f"Publicadas: {self.playlists} listas | {self.creadas} creadas | "
                  f"{self.anadidas} canciones anadidas | "
                  f"{len(self.sin_equivalencia)} sin equivalencia")
+        if self.traidas or self.faltantes:
+            texto += (f" | {self.traidas} traidas a iTunes | "
+                      f"{self.faltantes} te faltan")
         if self.fallidas:
             texto += f" | {len(self.fallidas)} con error"
         return texto
@@ -87,24 +102,45 @@ def publish_playlists(cfg: Config, tokens: TokenStore,
     library.connect()
     try:
         listas = _elegidas(library, cfg, log)
-        for playlist in listas:
+        # El indice de la biblioteca cuesta leerlo entero, asi que solo se hace
+        # si de verdad hay algo que traer de Spotify.
+        index: LibraryIndex | None = None
+        if any(traer for _, _, traer in listas):
+            if "spotify" in clientes:
+                index = library.index()
+            else:
+                log("  hay listas marcadas para traer, pero Spotify no esta "
+                    "entre los destinos: no se trae nada")
+
+        for playlist, llevar, traer in listas:
             if parar():
                 log("  detenido por el usuario")
                 break
             nombre = str(playlist.Name)
-            canciones = _canciones_de(playlist, ffprobe)
-            if not canciones:
+            canciones = _canciones_de(playlist, ffprobe) if llevar else []
+            if llevar and not canciones and not traer:
                 log(f"  ~ {nombre}: vacia, se omite")
                 continue
-            for servicio, cliente in clientes.items():
-                if parar():
-                    break
+            stats.playlists += 1
+
+            if llevar and canciones:
+                for servicio, cliente in clientes.items():
+                    if parar():
+                        break
+                    try:
+                        _publicar(cliente, servicio, nombre, canciones, cfg,
+                                  state, log, stats)
+                    except (ApiError, ITunesError) as exc:
+                        log(f"  ! {nombre} en {servicio}: {exc}")
+                        stats.fallidas.append((f"{nombre} ({servicio})", str(exc)))
+
+            if traer and index is not None and not parar():
                 try:
-                    _publicar(cliente, servicio, nombre, canciones, cfg, state,
-                              log, stats)
+                    _traer(clientes["spotify"], playlist, nombre, cfg, index,
+                           library, log, stats)
                 except (ApiError, ITunesError) as exc:
-                    log(f"  ! {nombre} en {servicio}: {exc}")
-                    stats.fallidas.append((f"{nombre} ({servicio})", str(exc)))
+                    log(f"  ! traer '{nombre}' de Spotify: {exc}")
+                    stats.fallidas.append((f"{nombre} (traer)", str(exc)))
     finally:
         library.close()
         state.save()
@@ -114,18 +150,30 @@ def publish_playlists(cfg: Config, tokens: TokenStore,
 
 
 def _elegidas(library: ITunesLibrary, cfg: Config,
-              log: Callable[[str], None]) -> list[Any]:
-    """Las playlists de iTunes marcadas; si no hay ninguna marcada, ninguna."""
-    querem = [normalize(n) for n in (cfg.get("publish_playlists") or []) if n]
-    todas = library.user_playlists()
+              log: Callable[[str], None]) -> list[tuple[Any, bool, bool]]:
+    """Las playlists marcadas, cada una con su sentido: (lista, llevar, traer).
+
+    Marcar solo 'llevar' la copia hacia fuera, solo 'traer' la rellena desde
+    Spotify, y marcar las dos la mantiene igual en los dos sitios.
+    """
+    llevar = {normalize(n) for n in (cfg.get("publish_playlists") or []) if n}
+    traer = {normalize(n) for n in (cfg.get("publish_import") or []) if n}
+    querem = llevar | traer
     if not querem:
         log("  no has marcado ninguna playlist de iTunes que publicar")
         return []
+
     # Las que crea la propia app al traer cosas de TIDAL no se devuelven.
     prefijo = normalize(str(cfg.get("itunes_playlist_prefix", "")))
-    elegidas = [p for p in todas
-                if normalize(str(p.Name)) in querem
-                and not (prefijo and normalize(str(p.Name)).startswith(prefijo))]
+    elegidas: list[tuple[Any, bool, bool]] = []
+    for playlist in library.user_playlists():
+        nombre = str(playlist.Name)
+        clave = normalize(nombre)
+        if clave not in querem or _is_missing_list(nombre):
+            continue
+        if prefijo and clave.startswith(prefijo):
+            continue
+        elegidas.append((playlist, clave in llevar, clave in traer))
     log(f"  {len(elegidas)} de {len(querem)} playlists encontradas en iTunes")
     return elegidas
 
@@ -194,12 +242,121 @@ def _publicar(cliente: Any, servicio: str, nombre: str, canciones: list[Track],
             nuevas.append(encontrada)
             ya.add(encontrada)
 
-    stats.playlists += 1
     if nuevas:
         cliente.add_to_playlist(str(playlist_id), nuevas)
         stats.anadidas += len(nuevas)
     log(f"  ~ {nombre} -> {servicio}: {len(canciones)} en iTunes, "
         f"{len(nuevas)} anadidas")
+
+
+# --------------------------------------------------------------------------
+# El sentido de vuelta: de Spotify a iTunes
+# --------------------------------------------------------------------------
+def _traer(cliente: Any, playlist: Any, nombre: str, cfg: Config,
+           index: LibraryIndex, library: ITunesLibrary,
+           log: Callable[[str], None], stats: PublishStats) -> None:
+    """Mete en la lista de iTunes lo que hayas anadido en la de Spotify.
+
+    Solo se anade lo que ya tengas en la biblioteca: esto no descarga nada. Lo
+    que no tengas se queda apuntado en '<lista> - Faltantes en iTunes'.
+    """
+    destino = f"{cfg.get('publish_prefix', '')}{nombre}"
+    cruda = _buscar_lista(cliente, "spotify", destino)
+    if cruda is None:
+        log(f"  ~ {nombre}: no hay '{destino}' en Spotify, nada que traer")
+        return
+    playlist_id = cruda.get("id")
+    if not playlist_id or playlist_id == "dry-run":
+        return
+
+    de_spotify = cliente.playlist_tracks(str(playlist_id))
+    if not de_spotify:
+        log(f"  ~ {nombre}: '{destino}' esta vacia en Spotify")
+        return
+
+    escribible = library.is_writable(playlist)
+    if not escribible:
+        log(f"  ~ {nombre}: es una lista inteligente de iTunes y no admite "
+            "canciones; solo se apunta lo que te falta")
+
+    actuales = _ids_de(playlist)
+    anadidas = 0
+    faltan: list[Track] = []
+    for track in de_spotify:
+        entry = index.find(track)
+        if entry is None:
+            faltan.append(track)
+            stats.sin_equivalencia.append(
+                (f"itunes / {nombre}", str(track), index.explain(track)))
+            continue
+        if entry.db_id in actuales or not escribible:
+            continue
+        if not cfg.dry_run:
+            _add_track(playlist, entry.track, nombre)
+        actuales.add(entry.db_id)
+        anadidas += 1
+
+    stats.traidas += anadidas
+    stats.faltantes += len(faltan)
+    log(f"  ~ {nombre} <- spotify: {len(de_spotify)} en Spotify, "
+        f"{anadidas} anadidas a iTunes, {len(faltan)} sin encontrar")
+
+    # Tambien con la lista vacia: hay que sacar de ahi lo que ya no falta.
+    if cfg.get("publish_missing_playlist", True):
+        _publicar_faltantes(cliente, destino, faltan, cfg, log, stats)
+
+
+def _ids_de(playlist: Any) -> set[int]:
+    """Los ids de biblioteca de lo que ya tiene la lista de iTunes."""
+    out: set[int] = set()
+    for com in _com_items(playlist.Tracks):
+        try:
+            out.add(int(com.TrackDatabaseID))
+        except Exception:  # noqa: BLE001 - entrada ilegible, se ignora
+            continue
+    return out
+
+
+def _publicar_faltantes(cliente: Any, destino: str, faltan: list[Track],
+                        cfg: Config, log: Callable[[str], None],
+                        stats: PublishStats) -> None:
+    """Mantiene en Spotify la lista de lo que no tienes en iTunes.
+
+    Se pone al dia en los dos sentidos, para que sea siempre lo que te falta
+    AHORA y no un historico. Nunca es publica: es tu lista de la compra.
+
+    Estas listas se quedan en Spotify a proposito y no viajan a TIDAL: la
+    sincronizacion las ignora por el nombre (ver sync._playlist_allowed).
+    """
+    nombre = f"{destino} - Faltantes en iTunes"
+    cruda = _buscar_lista(cliente, "spotify", nombre)
+    if cruda is None:
+        if not faltan:
+            return              # nada que apuntar: no se crea una lista vacia
+        log(f"  + creando en spotify: {nombre}")
+        cruda = cliente.create_playlist(
+            nombre, "Canciones de esta lista que no estan en tu iTunes", False)
+        stats.creadas += 1
+    playlist_id = cruda.get("id")
+    if not playlist_id or playlist_id == "dry-run":
+        return
+
+    ya = {t.id for t in cliente.playlist_tracks(str(playlist_id))}
+    quiero = {t.id for t in faltan}
+
+    nuevas = sorted(quiero - ya)
+    if nuevas:
+        cliente.add_to_playlist(str(playlist_id), nuevas)
+        log(f"    {len(nuevas)} anadidas a '{nombre}'")
+
+    resueltas = sorted(ya - quiero)
+    if resueltas:
+        try:
+            cliente.remove_from_playlist(str(playlist_id), resueltas)
+            log(f"    {len(resueltas)} ya no faltan, fuera de '{nombre}'")
+        except ApiError as exc:
+            # Limpiarla es lo accesorio: lo importante ya esta en iTunes.
+            log(f"    no se pudo limpiar '{nombre}': {exc}")
 
 
 def _buscar_lista(cliente: Any, servicio: str, nombre: str) -> dict[str, Any] | None:
