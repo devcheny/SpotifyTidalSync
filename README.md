@@ -223,6 +223,44 @@ canciones añadiría sin tocar iTunes.
 
 ---
 
+## Publicar tus listas de iTunes (y traerlas de vuelta)
+
+Pestaña **Publicar**, que es el camino contrario al de arriba: parte de una lista
+tuya de iTunes y crea la misma en Spotify con el nombre `iTunes - <nombre>`,
+buscando allí cada canción por título y artista.
+
+Pulsa *Cargar de iTunes* y marca, para cada lista, en qué sentido va:
+
+| Columna | Qué hace |
+|---|---|
+| **llevar** | iTunes → Spotify. Lo que tengas en la lista local aparece en la de Spotify. Es el único sentido posible para las listas inteligentes y para TIDAL. |
+| **traer** | Spotify → iTunes. Lo que hayas añadido en la lista de Spotify **y ya tengas en tu biblioteca** entra en la lista de iTunes. No descarga nada. |
+| **publica** | Deja la lista de Spotify visible para cualquiera. Por defecto ninguna lo es, y antes de crear una pública te lo pregunta. |
+
+Marcando **las dos primeras** la lista se mantiene igual en los dos sitios: es la
+sincronización bidireccional. Las **listas inteligentes** aparecen marcadas como
+tales y con la casilla *traer* apagada: iTunes no deja añadirles canciones, las
+llena él con sus propias reglas.
+
+**A TIDAL se llega por Spotify.** La API v2 de TIDAL no busca por texto, así que
+allí solo se puede enlazar una canción por su ISRC, que iTunes no da (se saca de
+las etiquetas del fichero con ffprobe, y muchos no lo traen). Por eso Spotify
+viene marcado y TIDAL no: lo normal es publicar en Spotify y dejar que la
+sincronización de siempre lo lleve a TIDAL. Traer solo funciona desde Spotify.
+
+**La lista de lo que te falta.** Al traer, las canciones de Spotify que no estén
+en tu biblioteca se quedan apuntadas en una lista aparte de Spotify llamada
+`iTunes - <nombre> - Faltantes en iTunes`, cómoda para ir consiguiéndolas. Se
+mantiene al día en los dos sentidos: en cuanto una aparece en tu biblioteca sale
+de ahí sola, así que siempre es lo que te falta **ahora** y no un histórico.
+Nunca es pública, y **no se copia a TIDAL**: la sincronización se salta por el
+nombre cualquier lista que acabe en `- Faltantes en iTunes`, en los dos lados.
+
+El botón *Probar* hace la pasada entera sin escribir nada, ni en las cuentas ni
+en iTunes.
+
+---
+
 ## Convertir a ALAC
 
 Pestaña **Convertir a ALAC**. iTunes no sabe leer FLAC: lo que dejas en la carpeta de
