@@ -352,6 +352,14 @@ class FlacConverter:
             faltan["title"] = titulo
         if pista and not tiene.get("track"):
             faltan["track"] = pista
+
+        # Los que colaboran suelen ir escondidos en el titulo y no en el
+        # artista, asi que la cancion entra en iTunes a nombre de uno solo.
+        completo = sumar_artistas(faltan.get("artist") or tiene.get("artist", ""),
+                                  faltan.get("title") or tiene.get("title", ""))
+        if completo:
+            faltan["artist"] = completo
+
         if faltan:
             self.log(f"      completando: {', '.join(sorted(faltan))}")
         return faltan
@@ -1074,6 +1082,58 @@ def _leer_tags(ffprobe: str, source: Path) -> dict[str, str]:
     for clave, valor in leer_libres(source).items():
         fuera.setdefault(clave, valor)
     return fuera
+
+
+# "(feat. X)", "ft. Y", "con Z"... y lo que va detras, hasta cerrar el
+# parentesis o acabar el titulo.
+_INVITADOS = re.compile(
+    r"[\(\[\-]?\s*(?:feat\.?|ft\.?|featuring|with|con)\s+([^)\]]+)[\)\]]?",
+    re.IGNORECASE)
+# Dentro de ese trozo puede haber varios: "X, Y & Z".
+_ENTRE_INVITADOS = re.compile(r"\s*(?:,|&|;|\+|\by\b)\s*", re.IGNORECASE)
+# Como se separan los interpretes al escribirlos: es lo que ya usan los FLAC
+# de las tiendas y lo que iTunes entiende.
+SEPARADOR_ARTISTAS = "; "
+
+
+def artistas_del_titulo(titulo: str) -> list[str]:
+    """Los interpretes que van escondidos en el titulo, no en el artista.
+
+    "EL BACHATON (feat. Lucho RK)" trae a Lucho RK, pero la etiqueta de
+    artista suele decir solo "Lola Indigo", y asi es como entra la cancion en
+    iTunes: a nombre de uno solo.
+    """
+    encontrado = _INVITADOS.search(titulo or "")
+    if not encontrado:
+        return []
+    fuera = []
+    for trozo in _ENTRE_INVITADOS.split(encontrado.group(1)):
+        nombre = trozo.strip(" -_()[]")
+        if nombre and nombre.lower() not in ("los", "las", "el", "la"):
+            fuera.append(nombre)
+    return fuera
+
+
+def sumar_artistas(artista: str, titulo: str) -> str:
+    """El artista con los invitados del titulo anadidos, o "" si no cambia.
+
+    Solo suma: nunca quita ni cambia lo que ya hubiera, y no repite a uno que
+    ya estuviera escrito aunque sea de otra manera.
+    """
+    invitados = artistas_del_titulo(titulo)
+    if not invitados:
+        return ""
+    hay = [a.strip() for a in re.split(r"\s*[;,]\s*", artista or "") if a.strip()]
+    vistos = {_llano(a) for a in hay}
+    nuevos = [a for a in invitados if _llano(a) and _llano(a) not in vistos]
+    if not nuevos:
+        return ""
+    return SEPARADOR_ARTISTAS.join(hay + nuevos)
+
+
+def _llano(texto: str) -> str:
+    """Para comparar nombres sin que estorben mayusculas ni puntuacion."""
+    return re.sub(r"[^a-z0-9]+", "", (texto or "").lower())
 
 
 _SEPARADOR = re.compile(r"\s+-\s+")

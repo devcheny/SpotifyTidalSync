@@ -177,6 +177,32 @@ print("  con numero de pista    ->", metadatos(args))
 assert metadatos(args) == {"artist": "Xiyo", "title": "Do You Remember",
                            "track": "3"}, metadatos(args)
 
+# --- los que colaboran suelen ir en el titulo, no en el artista -------------
+from stsync.convert import sumar_artistas, artistas_del_titulo
+
+print()
+print("===== artistas escondidos en el titulo =====")
+for artista, titulo, espera in [
+    ("Lola Indigo", "EL BACHATON (feat. Lucho RK)", "Lola Indigo; Lucho RK"),
+    ("Karol G", "Provenza ft. Maria Becerra, Nicki Nicole",
+     "Karol G; Maria Becerra; Nicki Nicole"),
+    ("Shakira", "Sessions #53 [with Bizarrap]", "Shakira; Bizarrap"),
+    ("ROSALIA; The Weeknd", "La Fama (feat. The Weeknd)", ""),   # ya estaba
+    ("Bad Bunny", "Titi Me Pregunto", ""),                       # no hay nadie
+    ("Manolo", "Cancion (Remastered 2016)", ""),                 # no confundir
+]:
+    sale = sumar_artistas(artista, titulo)
+    print(f"  {artista:<20} + {titulo:<42} -> {sale or '(sin cambio)'}")
+    assert sale == espera, (artista, titulo, sale)
+
+# Y de punta a punta: el .m4a sale con los dos.
+args = convertir_uno("Lola Indigo - EL BACHATON.flac",
+                     tags={"ARTIST": "Lola Indigo",
+                           "TITLE": "EL BACHATON (feat. Lucho RK)"})
+print("  al convertir           ->", metadatos(args)["artist"])
+assert metadatos(args)["artist"] == "Lola Indigo; Lucho RK", metadatos(args)
+assert metadatos(args)["title"] == "EL BACHATON (feat. Lucho RK)",     "el titulo se deja como estaba"
+
 args = convertir_uno("99 Luftballons.flac")
 print("  titulo que empieza por numero ->", metadatos(args))
 assert metadatos(args) == {"title": "99 Luftballons"}, metadatos(args)
