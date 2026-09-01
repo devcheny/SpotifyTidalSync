@@ -217,6 +217,8 @@ print()
 # Con -map_metadata ffmpeg copia solo lo que sabe traducir a MP4 y tira el
 # resto. El ISRC es de los que tira, y es la unica llave para TIDAL.
 from stsync.convert import args_metadatos, etiquetas_perdidas
+sys.path.insert(0, str(AQUI))
+from dobles import m4a_falso as m4a_de_mentira
 
 DEL_FLAC = {"isrc": "ESUM72600399", "barcode": "0600574153173",
             "title": "EL BACHATON", "publisher": "Universal", "encoder": "Lavf"}
@@ -235,20 +237,36 @@ print("se han perdido:", perdidas)
 assert perdidas == ["barcode", "isrc", "publisher"], perdidas
 assert etiquetas_perdidas(DEL_FLAC, DEL_FLAC) == [], "no falta ninguna"
 
-# De punta a punta: el aviso sale en el registro al convertir.
+# Las que ffmpeg no coloca se escriben aparte, como atomos libres, y se leen
+# de vuelta. Un .m4a de verdad hace falta aqui: mutagen no se conforma con
+# bytes sueltos, y precisamente por eso vale la pena que lo haga el.
+from stsync.convert import escribir_libres, leer_libres
+
 montar()
-os.environ["TAGS_FALSOS"] = json.dumps(DEL_FLAC)
-os.environ["TAGS_SALIDA"] = json.dumps({"title": "EL BACHATON"})
-lineas = []
-try:
-    (RAIZ / "Lola - Bachaton.flac").write_bytes(b"flac")
-    FlacConverter(config(RAIZ), lineas.append).run()
-finally:
-    del os.environ["TAGS_FALSOS"], os.environ["TAGS_SALIDA"]
-aviso = [l for l in lineas if "OJO" in l or "ISRC" in l]
-print("aviso al convertir:", aviso)
-assert any("isrc" in l for l in aviso), lineas
-assert any("no se puede publicar alli" in l for l in aviso), lineas
+real = RAIZ / "con-etiquetas.m4a"
+real.write_bytes(m4a_de_mentira(44100))
+error = escribir_libres(real, {"ISRC": "ESUM72600399", "BARCODE": "060057"})
+print()
+print("escribir atomos libres ->", repr(error) or "bien")
+if error.startswith("falta el paquete mutagen"):
+    print("  (sin mutagen en este equipo: no se puede comprobar)")
+else:
+    assert error == "", error
+    leidas = leer_libres(real)
+    print("  leidas de vuelta:", leidas)
+    assert leidas.get("isrc") == "ESUM72600399", leidas
+    assert leidas.get("barcode") == "060057", leidas
+    # Y quien lea las etiquetas tiene que verlas: sin esto, el ISRC recien
+    # escrito no serviria para publicar en TIDAL.
+    from stsync.convert import _leer_tags
+    os.environ["TAGS_FALSOS"] = json.dumps({"title": "Bachaton"})
+    try:
+        todas = _leer_tags(str(AQUI / "ffprobe-falso.bat"), real)
+    finally:
+        del os.environ["TAGS_FALSOS"]
+    print("  y _leer_tags las suma:", sorted(todas))
+    assert todas.get("isrc") == "ESUM72600399", todas
+    assert todas.get("title") == "Bachaton", "no pisa las que si ve ffprobe"
 
 
 # --- sin ffprobe no se empieza siquiera --------------------------------------

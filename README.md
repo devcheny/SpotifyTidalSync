@@ -458,8 +458,17 @@ el ISRC, el código de barras, el sello… y el ISRC no es un adorno: es la úni
 llave con la que se empareja una canción en TIDAL, porque su API no busca por
 texto.
 
-Así que se vuelven a escribir todas a mano, en minúsculas, además del
-`-map_metadata`. Y lo que **aun así** no llegue se dice en el registro:
+Así que se hacen tres cosas, en este orden:
+
+1. Se vuelven a pasar todas a mano con `-metadata`, además del `-map_metadata`.
+2. Las que **aun así** no entren se escriben aparte con **`mutagen`**, como
+   *átomos libres* (`----` con `mean = com.apple.iTunes`) — que es donde las
+   pone iTunes y donde las buscan los demás programas. No se hace a mano porque
+   agrandar el índice de un MP4 obliga a recolocar los desplazamientos de cada
+   trozo de audio, y esa es justo la clase de cosa que no conviene escribirse
+   uno mismo.
+3. Se vuelve a leer el fichero para confirmarlo. Y si algo sigue faltando, se
+   dice en el registro:
 
 ```
 OJO: el .m4a no se ha quedado con estas etiquetas: barcode, isrc, publisher
@@ -470,6 +479,9 @@ OJO: el .m4a no se ha quedado con estas etiquetas: barcode, isrc, publisher
 No se aborta por esto —la música está entera, que es lo que importa— pero
 tampoco se calla: enterarte un mes después, con la biblioteca ya convertida, no
 te sirve de nada.
+
+Al leer las etiquetas de un `.m4a` también se miran las libres, así que el ISRC
+recién escrito sirve de verdad para publicar en TIDAL, que era el motivo.
 
 ### Antes de machacar una canción
 

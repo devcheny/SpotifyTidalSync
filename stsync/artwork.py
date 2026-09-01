@@ -24,7 +24,7 @@ from .config import Config
 from .convert import (ART_JPEG, CONTENEDOR_MP4, CONVERTIBLES, NO_WINDOW,
                       OBJETIVOS_NOMBRE, POR_DEFECTO, TIMEOUT_S, ConvertError,
                       FlacConverter, args_calidad, args_caratula, caratula_de,
-                      avisar_etiquetas, comprobar_salida, find_ffmpeg,
+                      comprobar_salida, completar_etiquetas, find_ffmpeg,
                       informe_fichero,
                       leer_audio, _buscar_ffprobe)
 from .itunes import recorrer_biblioteca
@@ -234,7 +234,7 @@ def _convertir_suelto(cfg: Config, ffmpeg: str, fichero: Path,
             else "no se pudo convertir"
         partes.append(f"    NO SE PUDO: {motivo}")
     else:
-        partes += avisar_etiquetas(ffmpeg, fichero, nuevo)
+        partes += completar_etiquetas(ffmpeg, fichero, nuevo)
         partes += ["", "=" * 60, f"DESPUES  ->  {nuevo.name}", "=" * 60,
                    informe_fichero(cfg, nuevo)]
     texto = "\n".join(partes)

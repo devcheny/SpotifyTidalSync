@@ -8,6 +8,9 @@ import os
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from dobles import m4a_falso
+
 args = sys.argv[1:]
 salida = args[-1]
 
@@ -52,28 +55,6 @@ if os.environ.get("SIN_ESPACIO"):
 if os.environ.get("FALLA_CARATULA") and "attached_pic" in args:
     print("Could not write header: attached_pic no soportado", file=sys.stderr)
     sys.exit(1)
-
-def caja(tipo, cuerpo):
-    return (len(cuerpo) + 8).to_bytes(4, "big") + tipo + cuerpo
-
-
-def m4a_falso(rate, con_audio=True, segundos=180):
-    """Un .m4a con la forma justa para que lo lean nuestros comprobadores.
-
-    No suena, pero tiene los bloques que se miran antes de dar una conversion
-    por buena: el mvhd con la duracion y la entrada de audio con su frecuencia
-    en el campo de 16.16 bits. Con con_audio=False sale la cancion sin pista,
-    que es justo el desastre del que hay que protegerse.
-    """
-    mvhd = caja(b"mvhd", bytes(12) + (1000).to_bytes(4, "big")
-                + (segundos * 1000).to_bytes(4, "big") + bytes(80))
-    entrada = bytes(8) + bytes(8) + bytes(8) + (rate << 16).to_bytes(4, "big")
-    stsd = caja(b"stsd", bytes(8) + (caja(b"alac", entrada) if con_audio
-                                     else caja(b"mjpg", entrada)))
-    trak = caja(b"trak", caja(b"mdia", caja(b"minf", caja(b"stbl", stsd))))
-    return (caja(b"ftyp", b"M4A isomiso2") + caja(b"moov", mvhd + trak)
-            + caja(b"mdat", b"A" * 400))
-
 
 # Un ALAC de calidad CD ocupa bastante menos que el FLAC de 24/192 de origen.
 tamano = 400 if "44100" in args else 4000

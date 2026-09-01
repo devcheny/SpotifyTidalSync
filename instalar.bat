@@ -90,7 +90,7 @@ if errorlevel 1 (
 )
 
 rem --- Comprobacion final ---
-".venv\Scripts\python.exe" -c "import requests, tkinter" >nul 2>&1
+".venv\Scripts\python.exe" -c "import requests, mutagen, tkinter" >nul 2>&1
 if errorlevel 1 (
     echo.
     echo ERROR: la instalacion termino pero faltan modulos.

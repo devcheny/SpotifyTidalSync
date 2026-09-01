@@ -68,8 +68,12 @@ FORMATO_MUESTRA = {
     "flac": ("s16", "s32"),
 }
 
-# Etiquetas que las pone el contenedor, no la cancion: ni se copian ni se echan
-# de menos si no llegan al destino.
+# Donde guarda un MP4 lo que no es estandar. Es el "mean" que usa iTunes, asi
+# que es donde lo buscan los demas programas.
+PREFIJO_LIBRE = "----:com.apple.iTunes:"
+
+# Etiquetas que pone el contenedor, no la cancion: ni se copian ni se echan de
+# menos si no llegan al destino.
 ETIQUETAS_DEL_CONTENEDOR = {
     "encoder", "major_brand", "minor_version", "compatible_brands",
     "handler_name", "vendor_id", "language",
@@ -275,7 +279,7 @@ class FlacConverter:
 
         self.stats.converted += 1
         self.log(f"      -> {target.name}{_size_change(source, target)}")
-        for linea in avisar_etiquetas(ffmpeg, source, target):
+        for linea in completar_etiquetas(ffmpeg, source, target):
             self.log(f"      {linea}")
         if retirar:
             self._retire(source, folder)
@@ -666,26 +670,92 @@ def etiquetas_perdidas(antes: dict[str, str],
                   and k not in ETIQUETAS_DEL_CONTENEDOR)
 
 
-def avisar_etiquetas(ffmpeg: str, origen: Path, destino: Path) -> list[str]:
-    """Dice que etiquetas no han llegado al fichero nuevo, si es que falta alguna.
+def completar_etiquetas(ffmpeg: str, origen: Path, destino: Path) -> list[str]:
+    """Le pone al fichero nuevo las etiquetas que ffmpeg no supo colocar.
 
-    No se aborta por esto -la musica esta entera y es lo que importa-, pero
-    tampoco se calla: el ISRC es la unica llave para emparejar en TIDAL, y
-    enterarse un mes despues, con la biblioteca ya convertida, no vale de nada.
+    ffmpeg solo escribe en un .m4a las etiquetas de su tabla, y tira el resto
+    aunque se las pases a mano: el ISRC, el codigo de barras, el sello... Aqui
+    se vuelven a poner, y lo que aun asi no entre se dice en voz alta. No se
+    aborta por esto -la musica esta entera, que es lo que importa-, pero
+    tampoco se calla: enterarse un mes despues, con la biblioteca ya
+    convertida, no vale de nada.
     """
     ffprobe = _buscar_ffprobe(ffmpeg)
     if not ffprobe:
         return []
-    faltan = etiquetas_perdidas(_leer_tags(ffprobe, origen),
-                                _leer_tags(ffprobe, destino))
+    del_origen = _leer_tags(ffprobe, origen)
+    faltan = etiquetas_perdidas(del_origen, _leer_tags(ffprobe, destino))
     if not faltan:
         return []
+
+    problema = ""
+    if destino.suffix.lower() in CONTENEDOR_MP4:
+        problema = escribir_libres(destino,
+                                   {k: del_origen[k] for k in faltan})
+        if not problema:
+            # Se leen del propio fichero, no del informe de ffprobe: quien las
+            # ha escrito es quien sabe si estan.
+            puestas = leer_libres(destino)
+            faltan = [k for k in faltan if k not in puestas]
+            if not faltan:
+                return []
+
     aviso = [f"OJO: el {destino.suffix} no se ha quedado con estas etiquetas: "
              + ", ".join(faltan)]
+    if problema:
+        aviso.append(f"     no se han podido escribir aparte: {problema}")
     if "isrc" in faltan:
         aviso.append("     el ISRC es el codigo con el que se empareja una "
                      "cancion en TIDAL: sin el, esa no se puede publicar alli")
     return aviso
+
+
+def escribir_libres(destino: Path, tags: dict[str, str]) -> str:
+    """Mete esas etiquetas en el .m4a como atomos libres. "" si va bien.
+
+    Un MP4 guarda lo que no es estandar en atomos "----", con un `mean` que
+    dice de quien son; `com.apple.iTunes` es el que usa iTunes y el que miran
+    los demas programas. Se hace con mutagen y no a mano porque agrandar el
+    indice de un MP4 obliga a recolocar los desplazamientos de cada trozo de
+    audio, y esa es justo la clase de cosa que no conviene escribir uno mismo.
+    """
+    if not tags:
+        return ""
+    try:
+        from mutagen.mp4 import MP4, MP4FreeForm  # type: ignore[import-untyped]
+    except ImportError:
+        return ("falta el paquete mutagen; vuelve a ejecutar instalar.bat en "
+                "este equipo")
+    try:
+        fichero = MP4(destino)
+        for clave, valor in tags.items():
+            fichero[f"{PREFIJO_LIBRE}{clave.upper()}"] = MP4FreeForm(
+                str(valor).encode("utf-8"))
+        fichero.save()
+    except Exception as exc:  # noqa: BLE001 - mutagen lanza lo suyo
+        return str(exc)
+    return ""
+
+
+def leer_libres(source: Path) -> dict[str, str]:
+    """Las etiquetas que un .m4a guarda en atomos libres, en minusculas."""
+    if source.suffix.lower() not in CONTENEDOR_MP4:
+        return {}
+    try:
+        from mutagen.mp4 import MP4  # type: ignore[import-untyped]
+        fichero = MP4(source)
+    except Exception:  # noqa: BLE001 - sin mutagen, o fichero ilegible
+        return {}
+    fuera = {}
+    for clave, valor in (fichero.tags or {}).items():
+        if not clave.startswith(PREFIJO_LIBRE) or not valor:
+            continue
+        try:
+            fuera[clave[len(PREFIJO_LIBRE):].lower()] = \
+                bytes(valor[0]).decode("utf-8", "replace").strip()
+        except Exception:  # noqa: BLE001 - atomo raro, se ignora
+            continue
+    return fuera
 
 
 def formato_de(codec: str, bits: int) -> str:
@@ -997,8 +1067,13 @@ def _leer_tags(ffprobe: str, source: Path) -> dict[str, str]:
     except (OSError, subprocess.TimeoutExpired, ValueError):
         return {}
     etiquetas = (datos.get("format") or {}).get("tags") or {}
-    return {str(k).lower(): str(v).strip()
-            for k, v in etiquetas.items() if str(v).strip()}
+    fuera = {str(k).lower(): str(v).strip()
+             for k, v in etiquetas.items() if str(v).strip()}
+    # Las libres de un .m4a no siempre las cuenta ffprobe, y ahi es donde vive
+    # el ISRC despues de convertir: se leen del fichero y se suman.
+    for clave, valor in leer_libres(source).items():
+        fuera.setdefault(clave, valor)
+    return fuera
 
 
 _SEPARADOR = re.compile(r"\s+-\s+")
