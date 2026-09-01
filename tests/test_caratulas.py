@@ -313,6 +313,36 @@ assert "OJO: tiene saltos" in texto, "el informe de antes tiene que avisarlo"
 assert rota.read_bytes() != antes, "no la ha reescrito"
 assert "DESPUES" in texto, texto
 
+# --- 13c. y la reescritura no le puede quitar el ISRC ----------------------
+# ffmpeg solo vuelve a escribir las etiquetas de su tabla: el ISRC, el sello y
+# el codigo de barras se quedan por el camino aunque se le pase
+# "-map_metadata 0". Sin esto, arreglar los 27 ficheros con saltos habria
+# costado el ISRC de los 27, que es la unica llave para publicar en TIDAL.
+import json
+from stsync.convert import leer_libres
+
+montar()
+rota.write_bytes(antes)
+os.environ["TAGS_FALSOS"] = json.dumps({
+    "title": "Ni A La Rubia", "ISRC": "QZWFP2678555",
+    "BARCODE": "825353248370", "PUBLISHER": "2305284 Records DK"})
+os.environ["TAGS_SALIDA"] = json.dumps({"title": "Ni A La Rubia"})
+try:
+    texto = fix_one_file(config(), rota, lambda m: None)
+finally:
+    del os.environ["TAGS_FALSOS"], os.environ["TAGS_SALIDA"]
+
+puestas = leer_libres(rota)
+print("13c. etiquetas rescatadas ->", puestas)
+if "falta el paquete mutagen" in texto:
+    print("     (sin mutagen en este equipo: no se puede comprobar)")
+else:
+    assert puestas.get("isrc") == "QZWFP2678555", puestas
+    assert puestas.get("barcode") == "825353248370", puestas
+    assert puestas.get("publisher") == "2305284 Records DK", puestas
+    assert "OJO" not in texto.split("QUE SE LE HACE")[1], \
+        "no tiene que quedar ninguna etiqueta suelta"
+
 # --- 14. en simulacion dice lo que haria y no toca nada ---------------------
 montar()
 mala = BANCO / "hires-con-png.m4a"

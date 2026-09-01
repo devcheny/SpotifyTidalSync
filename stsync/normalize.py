@@ -19,7 +19,8 @@ from typing import Any, Callable
 from .config import Config
 from .convert import (CD_RATE, NO_WINDOW, OBJETIVOS_NOMBRE, POR_DEFECTO,
                       TIMEOUT_S, ConvertError, args_calidad, args_caratula,
-                      caratula_de, comprobar_salida, filtro_audio, find_ffmpeg,
+                      caratula_de, completar_etiquetas, comprobar_salida,
+                      filtro_audio, find_ffmpeg,
                       fotogramas_imposibles, leer_audio, medir_volumen,
                       nombre_libre, volumen_actual, _buscar_ffprobe, _rate_de)
 from .itunes import ITunesError, recorrer_biblioteca
@@ -228,7 +229,8 @@ def _revisar(track: Any, ffmpeg: str, ffprobe: str, cfg: Config,
         error, final = _convertir_a_alac(ffmpeg, fichero, track, medida,
                                          frecuencia, log)
     else:
-        error = _reescribir(ffmpeg, fichero, codec_args, medida, frecuencia)
+        error = _reescribir(ffmpeg, fichero, codec_args, medida, frecuencia,
+                            log=lambda m: log(f"      {m}"))
     if error:
         log(f"      no se pudo: {error}")
         stats.fallidas.append((fichero.name, error))
@@ -355,7 +357,7 @@ def _bajar_una(track: Any, ffmpeg: str, ffprobe: str, cfg: Config,
         return
 
     error = _reescribir(ffmpeg, fichero, codec_args, None, frecuencia,
-                        normalizar=False)
+                        normalizar=False, log=lambda m: log(f"      {m}"))
     if error:
         log(f"      no se pudo: {error}")
         stats.fallidas.append((fichero.name, error))
@@ -458,7 +460,7 @@ def _convertir_a_alac(ffmpeg: str, fichero: Path, track: Any,
     """
     nuevo = nombre_libre(fichero.with_suffix(".m4a"))
     error = _convertir(ffmpeg, fichero, nuevo, ["-c:a", "alac"], medida,
-                       frecuencia)
+                       frecuencia, log=lambda m: log(f"      {m}"))
     if error:
         return error, fichero
 
@@ -508,7 +510,8 @@ def _guardar(state: StateStore, hechas: dict[str, str], huella: str) -> None:
 
 def _reescribir(ffmpeg: str, fichero: Path, codec_args: list[str],
                 medida: dict[str, str] | None, frecuencia: list[str],
-                normalizar: bool = True) -> str:
+                normalizar: bool = True,
+                log: Callable[[str], None] | None = None) -> str:
     """Convierte a un temporal y solo entonces sustituye el original.
 
     Asi una cancion que falle a medias no se queda destrozada: el fichero de
@@ -516,7 +519,7 @@ def _reescribir(ffmpeg: str, fichero: Path, codec_args: list[str],
     """
     temporal = fichero.with_name(f".{fichero.stem}.normalizando{fichero.suffix}")
     error = _convertir(ffmpeg, fichero, temporal, codec_args, medida,
-                       frecuencia, normalizar)
+                       frecuencia, normalizar, log)
     if error:
         return error
 
@@ -529,7 +532,8 @@ def _reescribir(ffmpeg: str, fichero: Path, codec_args: list[str],
 
 def _convertir(ffmpeg: str, entrada: Path, salida: Path, codec_args: list[str],
                medida: dict[str, str] | None, frecuencia: list[str],
-               normalizar: bool = True) -> str:
+               normalizar: bool = True,
+               log: Callable[[str], None] | None = None) -> str:
     """Reescribe la cancion con el volumen arreglado. Devuelve "" si va bien.
 
     Se mapea el audio y, aparte, la caratula marcada como tal: con un simple
@@ -543,6 +547,7 @@ def _convertir(ffmpeg: str, entrada: Path, salida: Path, codec_args: list[str],
     """
     ffprobe = _buscar_ffprobe(ffmpeg)
     arte = caratula_de(ffprobe, entrada) if ffprobe else "desconocida"
+    apuntar = log or (lambda mensaje: None)
 
     detalle = "ffmpeg fallo"
     for con_caratula in (True, False):
@@ -571,6 +576,12 @@ def _convertir(ffmpeg: str, entrada: Path, salida: Path, codec_args: list[str],
             # a sustituir al que ya estaba bien.
             malo = comprobar_salida(salida, entrada)
             if not malo:
+                # Y se le devuelven las etiquetas que ffmpeg tira por no ser
+                # de su tabla -el ISRC, el sello, el codigo de barras-, que
+                # "-map_metadata 0" no salva. Aqui, mientras el original sigue
+                # entero: en cuanto se sustituya ya no habra de donde sacarlas.
+                for aviso in completar_etiquetas(ffmpeg, entrada, salida):
+                    apuntar(aviso)
                 return ""
             _borrar(salida)
             return malo

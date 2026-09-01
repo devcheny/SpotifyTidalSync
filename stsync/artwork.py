@@ -113,7 +113,7 @@ def _revisar(track: Any, ffmpeg: str, ffprobe: str, cfg: Config, quitar: bool,
     if cfg.dry_run:
         return
 
-    error = _reparar(ffmpeg, fichero, arte, quitar)
+    error = _reparar(ffmpeg, fichero, arte, quitar, log)
     if error:
         log(f"      no se pudo: {error}")
         stats.fallidas.append((fichero.name, error))
@@ -188,7 +188,7 @@ def fix_one_file(cfg: Config, fichero: Path,
             partes.append(f"  - {razon}")
         if not cfg.dry_run:
             error = _reescribir(ffmpeg, fichero, codec_args, None, frecuencia,
-                                normalizar=False)
+                                normalizar=False, log=partes.append)
             if error:
                 partes.append(f"    NO SE PUDO: {error}")
             else:
@@ -203,7 +203,8 @@ def fix_one_file(cfg: Config, fichero: Path,
         partes.append(f"  - pasar la portada de {arte} a JPEG")
         if not cfg.dry_run:
             error = _reparar(ffmpeg, fichero, arte,
-                             bool(cfg.get("artwork_remove", False)))
+                             bool(cfg.get("artwork_remove", False)),
+                             partes.append)
             if error:
                 partes.append(f"    NO SE PUDO: {error}")
             else:
@@ -257,7 +258,8 @@ def _convertir_suelto(cfg: Config, ffmpeg: str, fichero: Path,
     return texto
 
 
-def _reparar(ffmpeg: str, fichero: Path, arte: str, quitar: bool) -> str:
+def _reparar(ffmpeg: str, fichero: Path, arte: str, quitar: bool,
+             log: Callable[[str], None] | None = None) -> str:
     """Reescribe el fichero copiando el audio tal cual. Devuelve "" si va bien.
 
     El audio va con "-c:a copy", asi que sale identico al que habia: aqui no se
@@ -288,6 +290,12 @@ def _reparar(ffmpeg: str, fichero: Path, arte: str, quitar: bool) -> str:
     if malo:
         _borrar(temporal)
         return malo
+
+    # Del audio no se pierde nada, pero de las etiquetas si: ffmpeg no vuelve a
+    # escribir las que no son de su tabla. Se copian mientras el original sigue
+    # ahi, que despues ya no habria de donde.
+    for aviso in completar_etiquetas(ffmpeg, fichero, temporal):
+        (log or (lambda mensaje: None))(f"      {aviso}")
 
     fallo = _sustituir(temporal, fichero)
     if fallo:

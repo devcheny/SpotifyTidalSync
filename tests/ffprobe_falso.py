@@ -6,14 +6,26 @@ Devuelve lo que se le pida, y se lo inventa a partir del nombre del fichero:
   y 192 kHz, y si no, calidad CD. El codec sale de la extension.
 - `-show_streams -select_streams v:0`: la portada, que es donde va. "png" o
   "jpg" en el nombre dan ese formato; sin ninguno de los dos, no lleva.
-- `-show_format`: las etiquetas que le diga TAGS_FALSOS, o TAGS_SALIDA
-  si el fichero es un .m4a y esa variable esta puesta.
+- `-show_format`: las etiquetas que le diga TAGS_FALSOS, o TAGS_SALIDA si el
+  fichero es el que acaba de escribir el ffmpeg de mentira.
 
 Los dos primeros se pueden pedir a la vez, como hace el informe de un fichero.
 """
 import json
 import os
 import sys
+
+def recien_escrito():
+    """El fichero que escribio el ultimo ffmpeg, tal cual se lo pasaron."""
+    registro = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "ultimo-comando.txt")
+    try:
+        with open(registro, encoding="utf-8") as handle:
+            lineas = handle.read().splitlines()
+    except OSError:
+        return ""
+    return lineas[-1] if lineas else ""
+
 
 fichero = sys.argv[-1]
 nombre = os.path.basename(fichero).lower()
@@ -48,10 +60,12 @@ if "-show_streams" in sys.argv:
         }]
 
 if "-show_format" in sys.argv or "-show_streams" not in sys.argv:
-    # TAGS_SALIDA, si esta, es lo que trae el .m4a ya convertido: asi se puede
-    # comprobar que se detectan las etiquetas que se han quedado por el camino.
-    cual = "TAGS_SALIDA" if (nombre.endswith(".m4a")
-                             and os.environ.get("TAGS_SALIDA")) else "TAGS_FALSOS"
+    # TAGS_SALIDA, si esta, es lo que trae el fichero que ffmpeg acaba de
+    # escribir: asi se puede comprobar que se detectan las etiquetas que se han
+    # quedado por el camino. Cual es se sabe con exactitud, sin adivinarlo por
+    # el nombre: es el ultimo argumento del ultimo ffmpeg que se lanzo.
+    cual = "TAGS_SALIDA" if (os.environ.get("TAGS_SALIDA")
+                             and fichero == recien_escrito()) else "TAGS_FALSOS"
     etiquetas = json.loads(os.environ.get(cual) or "{}")
     salida["format"] = {
         "filename": fichero,
