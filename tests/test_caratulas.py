@@ -10,7 +10,7 @@ from stsync import normalize as norm
 from stsync.artwork import check_artwork
 from stsync.config import Config
 from stsync.convert import args_caratula
-from stsync.normalize import refresh_info
+from stsync.normalize import downsample_library, refresh_info
 
 BANCO = AQUI / "prueba-caratulas"
 FFMPEG = str(AQUI / "ffmpeg-falso.bat")
@@ -196,6 +196,59 @@ stats = refresh_info(config(dry_run=True), lambda m: None)
 assert stats.miradas == 1 and stats.refrescadas == 0, stats.summary()
 assert not LibreriaFalsa.canciones[0].refrescada
 print("8. la simulacion solo cuenta")
+
+
+# ===========================================================================
+# Bajar a calidad CD lo que se quedo por encima
+# ===========================================================================
+# Un .m4a de 24/192 no puede declarar su frecuencia: ese campo de la cabecera
+# solo llega a 65535 Hz, asi que se queda a cero y hay programas que se
+# cierran al leerlo.
+# --- 9. solo se tocan las que estan por encima ------------------------------
+montar()
+(BANCO / "hires-con-jpg.m4a").write_bytes(b"original hires")
+LibreriaFalsa.canciones = [
+    Com(BANCO / "hires-con-jpg.m4a"),      # el ffprobe falso la da a 192 kHz
+    Com(BANCO / "con-jpg.m4a"),            # ya esta a 44,1
+    Com(BANCO / "con-png.mp3"),            # con perdida: no se toca
+    Com(BANCO / "no-existe.m4a"),
+]
+lineas = []
+stats = downsample_library(config(), lineas.append)
+print()
+print("\n".join(lineas))
+print()
+assert stats.altas == 1, stats.altas
+assert stats.bajadas == 1, stats.bajadas
+assert stats.revisadas == 2, stats.revisadas    # el mp3 ni se cuenta
+assert (BANCO / "hires-con-jpg.m4a").read_bytes() != b"original hires"
+assert (BANCO / "con-jpg.m4a").read_bytes() == b"original con-jpg.m4a", \
+    "esa ya estaba a 44,1 y no habia que tocarla"
+orden = (AQUI / "ultimo-comando.txt").read_text(encoding="utf-8").splitlines()
+assert "-ar" in orden and orden[orden.index("-ar") + 1] == "44100", orden
+assert "-af" not in orden, "aqui no se normaliza: solo cambia la frecuencia"
+assert LibreriaFalsa.canciones[0].refrescada, "iTunes tiene que releerla"
+print("9. baja solo la de 192 kHz, y sin tocar el volumen")
+
+# --- 10. en simulacion se cuentan y no se toca nada -------------------------
+montar()
+(BANCO / "hires-con-jpg.m4a").write_bytes(b"original hires")
+LibreriaFalsa.canciones = [Com(BANCO / "hires-con-jpg.m4a")]
+stats = downsample_library(config(dry_run=True), lambda m: None)
+assert stats.altas == 1 and stats.bajadas == 0, stats.summary()
+assert (BANCO / "hires-con-jpg.m4a").read_bytes() == b"original hires"
+print("10. la simulacion solo cuenta")
+
+# --- 11. si ffmpeg falla, la cancion de siempre sigue entera ----------------
+os.environ["FALLA_TODO"] = "1"
+try:
+    stats = downsample_library(config(), lambda m: None)
+finally:
+    del os.environ["FALLA_TODO"]
+print("11. con ffmpeg roto ->", stats.summary())
+assert stats.bajadas == 0 and len(stats.fallidas) == 1, stats.summary()
+assert (BANCO / "hires-con-jpg.m4a").read_bytes() == b"original hires"
+assert not list(BANCO.glob(".*")), "no puede quedar ningun temporal"
 
 shutil.rmtree(BANCO, ignore_errors=True)
 print()

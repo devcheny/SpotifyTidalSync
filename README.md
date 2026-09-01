@@ -387,14 +387,33 @@ está la casilla para **quitar la portada** en vez de convertirla.
 Desde esta versión el conversor y el repaso ya dejan la portada en JPEG por su
 cuenta, así que esto es solo para lo convertido antes.
 
+**Bajar a calidad CD.** El arreglo del crash de rekordbox, y merece la pena
+entender por qué. En un MP4 la frecuencia de muestreo va en la cabecera como un
+número de 16.16 bits: **la parte entera son 16 bits, o sea hasta 65535 Hz**. Una
+canción de 192 kHz no cabe, así que ffmpeg deja ese campo **a cero** y apunta la
+frecuencia buena en la cookie del códec. iTunes y ffprobe leen la cookie y no ven
+nada raro; un programa que se fíe de la cabecera se encuentra un 0 y no todos lo
+sobreviven — rekordbox se cierra al analizar la canción, sin mensaje.
+
+```
+24 bits / 192 kHz  ->  frecuencia en la cabecera: 0 Hz      <- rekordbox muere
+16 bits / 44,1 kHz ->  frecuencia en la cabecera: 44100 Hz  <- bien
+```
+
+El botón recorre la biblioteca y reescribe a 16/44,1 lo que esté por encima. **No
+mide el volumen**, que es lo que tarda en el repaso completo: aquí solo cambia la
+frecuencia, así que va rápido, y de paso cada canción pasa a ocupar unas cinco
+veces menos. El volumen se queda exactamente como estuviera.
+
 **Examinar un fichero.** Cuando un reproductor se cierra al abrir una canción y no
 dice por qué, la única vía es poner al lado una que sí funcione y ver en qué se
 diferencian. Este botón cuenta todo lo que se sabe de un fichero: contenedor,
 duración y bitrate reales, cada stream con su códec y su formato de muestra, todas
 las etiquetas (cortando las larguísimas, pero diciendo cuánto miden), si el índice
-`moov` va al principio o al final, **si el fichero llega entero o está cortado** —
-eso se ve leyendo sus bloques, sin decodificar nada— y por último decodifica el
-audio de cabo a rabo para ver si da errores.
+`moov` va al principio o al final, **qué frecuencia declara la cabecera** (el 0 Hz
+de arriba se ve aquí), **si el fichero llega entero o está cortado** —eso se ve
+leyendo sus bloques, sin decodificar nada— y por último decodifica el audio de
+cabo a rabo para ver si da errores.
 
 **Releer datos en iTunes.** Para cuando iTunes sigue diciendo *9216 kbps* de una
 canción que en disco ya está a 1411. No es un fallo de la conversión: iTunes se
