@@ -205,6 +205,9 @@ def _to_track(raw: dict[str, Any] | None) -> Track | None:
         id=raw["id"],
         title=raw.get("name", ""),
         artist=artists[0] if artists else "",
+        # Todos, no solo el principal: es lo que hace falta para completar en
+        # iTunes una cancion que alli figura a nombre de uno solo.
+        artists=tuple(a for a in artists if a),
         album=(raw.get("album") or {}).get("name", ""),
         isrc=(raw.get("external_ids") or {}).get("isrc", "") or "",
         duration_ms=int(raw.get("duration_ms") or 0),

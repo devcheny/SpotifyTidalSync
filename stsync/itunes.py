@@ -14,12 +14,15 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
+from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from .config import Config
+from .convert import _buscar_ffprobe, _leer_tags, find_ffmpeg
 from .http import ApiError
 from .model import (DURATION_TOLERANCE_S, Track, mmss, normalize,
                     same_length)
+from .store import StateStore
 from .tidal import TidalClient
 
 # Cada lectura de un campo cruza la frontera COM: avisamos de vez en cuando.
@@ -813,6 +816,112 @@ def complete_tags(cfg: Config, tidal: TidalClient,
         library.close()
     log(f"  {stats.summary()}")
     return stats
+
+
+def complete_artists_by_isrc(cfg: Config, cliente: Any,
+                             log: Callable[[str], None],
+                             should_stop: Callable[[], bool] | None = None
+                             ) -> FixStats:
+    """Completa en iTunes los artistas de las canciones que figuran a nombre
+    de uno solo, buscandolas por su ISRC.
+
+    El ISRC identifica **esa grabacion exacta**, asi que la lista de
+    interpretes que devuelve el servicio es la del sello y no una adivinanza.
+    Por eso aqui no hace falta emparejar por texto ni desconfiar del
+    resultado, al reves que en el resto de la aplicacion.
+
+    Solo se miran las que tienen un unico artista escrito, que son las que
+    pueden ganar algo, y solo se anade: a un artista ya puesto no se le toca.
+    """
+    parar = should_stop or (lambda: False)
+    stats = FixStats()
+
+    ffmpeg = find_ffmpeg(str(cfg.get("ffmpeg_path", "")))
+    ffprobe = _buscar_ffprobe(ffmpeg) if ffmpeg else None
+    if not ffprobe:
+        raise ITunesError(
+            "Hace falta ffprobe (viene con ffmpeg) para leer el ISRC de cada "
+            "fichero, que es por donde se busca la cancion.")
+
+    log("")
+    log("== Completar artistas por ISRC ==")
+    if cfg.dry_run:
+        log("  (simulacion: no se cambia nada en iTunes)")
+    log("  solo se miran las canciones que figuran a nombre de un solo artista")
+
+    state = StateStore()
+    cache = state.data.setdefault("isrc_artistas", {})
+
+    def una(track: Any) -> None:
+        _artistas_de_una(track, ffprobe, cliente, cfg, cache, log, stats)
+
+    try:
+        recorrer_biblioteca(
+            log, parar, una,
+            avisar=lambda n, t: log(f"    {n}/{t}... ({stats.artists} completadas)"))
+    finally:
+        try:
+            state.save()
+        except OSError:
+            pass        # perder lo apuntado solo cuesta tiempo la proxima vez
+
+    log(f"  {stats.summary()}")
+    return stats
+
+
+def _artistas_de_una(com: Any, ffprobe: str, cliente: Any, cfg: Config,
+                     cache: dict[str, Any], log: Callable[[str], None],
+                     stats: FixStats) -> None:
+    try:
+        actual = str(com.Artist or "")
+    except Exception:  # noqa: BLE001 - entrada ilegible
+        return
+    if not actual or _ya_son_varios(actual):
+        return
+
+    fichero = _fichero_de_com(com)
+    if fichero is None:
+        return
+    isrc = _leer_tags(ffprobe, fichero).get("isrc", "").strip().upper()
+    if not isrc:
+        return
+
+    if isrc in cache:
+        nombres = cache[isrc]
+    else:
+        encontrada = cliente.find_by_isrc(isrc)
+        nombres = list(encontrada.artists) if encontrada else []
+        cache[isrc] = nombres
+    if len(nombres) < 2:
+        stats.already += 1
+        return
+
+    entry = _Entry(com, 0, actual, str(getattr(com, "Name", "")), (),
+                   _tokens(actual), 0.0, False, False)
+    _completar_uno(entry, Track(service=cliente_servicio(cliente), id="", title="",
+                                artist=nombres[0], artists=tuple(nombres)),
+                   "por ISRC", cfg, log, stats)
+
+
+def cliente_servicio(cliente: Any) -> str:
+    return "tidal" if type(cliente).__name__.startswith("Tidal") else "spotify"
+
+
+def _ya_son_varios(artista: str) -> bool:
+    """Si ya trae mas de un nombre escrito, no hay nada que completar."""
+    return bool(re.search(r"[;,&/]| feat| ft\.| con | with ", artista,
+                          re.IGNORECASE))
+
+
+def _fichero_de_com(com: Any) -> Path | None:
+    """La ruta del fichero de una cancion de iTunes, si es un fichero local."""
+    try:
+        if int(com.Kind) != 1:
+            return None
+        ruta = str(com.Location or "")
+    except Exception:  # noqa: BLE001
+        return None
+    return Path(ruta) if ruta and Path(ruta).is_file() else None
 
 
 def _completar_uno(entry: _Entry, track: Track, playlist: str, cfg: Config,
