@@ -16,7 +16,7 @@ from .config import Config
 from .convert import ConvertError, FlacConverter
 from .http import ApiError
 from .itunes import ITunesError, ITunesSync, _is_missing_list
-from .model import Track, normalize
+from .model import (DURATION_TOLERANCE_S, Track, normalize, same_recording)
 from .paths import reports_dir
 from .spotify import SpotifyClient
 from .store import StateStore, TokenStore
@@ -348,6 +348,9 @@ class SyncEngine:
         service = "tidal" if isinstance(target, TidalClient) else "spotify"
         cache: dict[str, Any] = self.state.data.setdefault("resolve", {}) \
                                                .setdefault(service, {})
+        comprobar = bool(self.cfg.get("match_check_duration", True))
+        tolerancia = float(self.cfg.get("match_duration_tolerance",
+                                        DURATION_TOLERANCE_S))
         ids: list[str] = []
         matched: set[str] = set()
 
@@ -365,25 +368,32 @@ class SyncEngine:
                     continue
                 if time.time() - entry.get("ts", 0) < NEGATIVE_TTL:
                     self.stats.unmatched.append(
-                        (service, str(track), "sin equivalencia en el catalogo"))
+                        (service, str(track),
+                         entry.get("motivo") or "sin equivalencia en el catalogo"))
                     continue  # ya sabemos que no esta, no gastamos otra busqueda
 
             found: Track | None = None
+            motivo = "sin equivalencia en el catalogo"
             if track.isrc:
                 found = target.find_by_isrc(track.isrc)
             if found is None:
                 found = target.find_by_text(track.title, track.artist)
                 if found and found.text_key != track.text_key:
                     found = None  # el buscador devolvio otra cancion
+            if found is not None and comprobar:
+                # Llamarse igual no basta: el buscador por texto devuelve
+                # tan contento el directo, el radio edit o una version ajena.
+                aviso = same_recording(track, found, tolerancia)
+                if aviso:
+                    found, motivo = None, aviso
 
             if found:
                 cache[track.key] = {"id": found.id, "ts": time.time()}
                 ids.append(found.id)
                 matched.add(track.key)
             else:
-                cache[track.key] = {"id": "", "ts": time.time()}
-                self.stats.unmatched.append(
-                    (service, str(track), "sin equivalencia en el catalogo"))
+                cache[track.key] = {"id": "", "ts": time.time(), "motivo": motivo}
+                self.stats.unmatched.append((service, str(track), motivo))
 
         return ids, matched
 

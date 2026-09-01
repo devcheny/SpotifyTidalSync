@@ -32,7 +32,7 @@ from .convert import _buscar_ffprobe, _leer_tags, find_ffmpeg
 from .http import ApiError
 from .itunes import (ITunesError, ITunesLibrary, LibraryIndex, _add_track,
                      _com_items, _is_missing_list)
-from .model import Track, normalize
+from .model import DURATION_TOLERANCE_S, Track, normalize, same_recording
 from .spotify import SpotifyClient
 from .store import StateStore, TokenStore
 from .tidal import TidalClient
@@ -107,7 +107,7 @@ def publish_playlists(cfg: Config, tokens: TokenStore,
         index: LibraryIndex | None = None
         if any(traer for _, _, traer in listas):
             if "spotify" in clientes:
-                index = library.index()
+                index = library.index(cfg)
             else:
                 log("  hay listas marcadas para traer, pero Spotify no esta "
                     "entre los destinos: no se trae nada")
@@ -231,12 +231,10 @@ def _publicar(cliente: Any, servicio: str, nombre: str, canciones: list[Track],
     ya = {t.id for t in cliente.playlist_tracks(str(playlist_id))}
     nuevas: list[str] = []
     for track in canciones:
-        encontrada = _resolver(cliente, servicio, track, state)
+        encontrada, motivo = _resolver(cliente, servicio, track, cfg, state)
         if encontrada is None:
             stats.sin_equivalencia.append(
-                (f"{servicio} / {nombre}", str(track),
-                 "sin ISRC en el fichero" if servicio == "tidal" and not track.isrc
-                 else "no esta en el catalogo"))
+                (f"{servicio} / {nombre}", str(track), motivo))
             continue
         if encontrada not in ya:
             nuevas.append(encontrada)
@@ -371,26 +369,40 @@ def _buscar_lista(cliente: Any, servicio: str, nombre: str) -> dict[str, Any] | 
     return None
 
 
-def _resolver(cliente: Any, servicio: str, track: Track,
-              state: StateStore) -> str | None:
-    """El id de esa cancion en el servicio, recordando lo ya buscado."""
+def _resolver(cliente: Any, servicio: str, track: Track, cfg: Config,
+              state: StateStore) -> tuple[str | None, str]:
+    """(id de esa cancion en el servicio, motivo si no vale), con memoria."""
     cache = state.data.setdefault("publish", {}).setdefault(servicio, {})
     clave = track.text_key
+    sin_isrc = "sin ISRC en el fichero" if servicio == "tidal" and not track.isrc \
+        else "no esta en el catalogo"
+
     entrada = cache.get(clave)
     if isinstance(entrada, dict):
         if entrada.get("id"):
-            return str(entrada["id"])
+            return str(entrada["id"]), ""
         # Que hoy no este no significa que no llegue nunca: los catalogos
         # cambian, asi que pasado un tiempo se vuelve a mirar.
         if time.time() - entrada.get("ts", 0) < NEGATIVE_TTL:
-            return None
+            return None, entrada.get("motivo") or sin_isrc
 
     encontrada = None
+    motivo = sin_isrc
     if track.isrc:
         encontrada = cliente.find_by_isrc(track.isrc)
     if encontrada is None:
         encontrada = cliente.find_by_text(track.title, track.artist)
         if encontrada and encontrada.text_key != track.text_key:
             encontrada = None       # el buscador ha devuelto otra cancion
-    cache[clave] = {"id": encontrada.id if encontrada else "", "ts": time.time()}
-    return encontrada.id if encontrada else None
+    if encontrada is not None and cfg.get("match_check_duration", True):
+        # Que se llame igual no la hace la misma grabacion. Si el fichero trae
+        # ISRC y coincide, no hay mas que hablar; si no, manda la duracion.
+        aviso = same_recording(track, encontrada,
+                               float(cfg.get("match_duration_tolerance",
+                                             DURATION_TOLERANCE_S)))
+        if aviso:
+            encontrada, motivo = None, aviso
+
+    cache[clave] = {"id": encontrada.id if encontrada else "",
+                    "ts": time.time(), "motivo": "" if encontrada else motivo}
+    return (encontrada.id, "") if encontrada else (None, motivo)
