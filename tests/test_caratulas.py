@@ -288,6 +288,31 @@ print("13.", [l.strip() for l in texto.splitlines() if l.startswith("  - ")])
 assert "ya esta bien" in texto, texto
 assert buena.read_bytes() == b"original con-jpg.m4a", "la ha tocado"
 
+# --- 13b. ...pero una con saltos NO esta bien, aunque lo parezca -----------
+# Calidad correcta y portada en JPEG: por ahi no hay nada que decirle. Lo que
+# tiene roto es la tabla de tiempos, que es justo lo que cierra rekordbox, y
+# antes salia de aqui un "ya esta bien" mientras el repaso de la biblioteca si
+# la arreglaba. Las dos pasadas tienen que decir lo mismo.
+montar()
+rota = BANCO / "con-jpg.m4a"
+cookie = caja(b"alac", bytes(4) + (4096).to_bytes(4, "big")
+              + bytes(1) + bytes([16]) + bytes(14))
+entrada = caja(b"alac", bytes(24) + (44100 << 16).to_bytes(4, "big") + cookie)
+stts = caja(b"stts", bytes(4) + (2).to_bytes(4, "big")
+            + (100).to_bytes(4, "big") + (4096).to_bytes(4, "big")
+            + (1).to_bytes(4, "big") + (7666).to_bytes(4, "big"))
+stbl = caja(b"stbl", caja(b"stsd", bytes(8) + entrada) + stts)
+antes = (caja(b"ftyp", b"M4A ")
+         + caja(b"moov", caja(b"trak", caja(b"mdia", caja(b"minf", stbl)))))
+rota.write_bytes(antes)
+texto = fix_one_file(config(), rota, lambda m: None)
+print("13b.", [l.strip() for l in texto.splitlines() if l.startswith("  - ")])
+assert "reencuadrar" in texto, texto
+assert "ya esta bien" not in texto, "los saltos no son estar bien"
+assert "OJO: tiene saltos" in texto, "el informe de antes tiene que avisarlo"
+assert rota.read_bytes() != antes, "no la ha reescrito"
+assert "DESPUES" in texto, texto
+
 # --- 14. en simulacion dice lo que haria y no toca nada ---------------------
 montar()
 mala = BANCO / "hires-con-png.m4a"

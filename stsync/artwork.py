@@ -25,8 +25,8 @@ from .convert import (ART_JPEG, CONVERTIBLES, NO_WINDOW, OBJETIVOS_NOMBRE,
                       POR_DEFECTO, TIMEOUT_S, ConvertError, FlacConverter,
                       args_calidad, args_caratula, caratula_de,
                       comprobar_salida, completar_etiquetas, es_mp4,
-                      find_ffmpeg, informe_fichero, leer_audio,
-                      _buscar_ffprobe)
+                      find_ffmpeg, fotogramas_imposibles, informe_fichero,
+                      leer_audio, _buscar_ffprobe)
 from .itunes import recorrer_biblioteca
 from .normalize import (SIN_PERDIDA, _borrar, _fichero_de, _reescribir,
                         _sustituir)
@@ -138,8 +138,9 @@ def fix_one_file(cfg: Config, fichero: Path,
 
     - un FLAC, WAV, APE... se **convierte** a ALAC, como si estuviera en la
       carpeta de auto-anadir, pero sin llevarse el original por delante;
-    - un .m4a se **arregla**: se le baja la calidad si pasa del techo y se le
-      pasa la portada a JPEG si hace falta.
+    - un .m4a se **arregla**: se le baja la calidad si pasa del techo, se le
+      reencuadra el audio si su linea de tiempo tiene saltos y se le pasa la
+      portada a JPEG si hace falta.
 
     En los dos casos devuelve el informe de como estaba y de como ha quedado.
     """
@@ -170,9 +171,21 @@ def fix_one_file(cfg: Config, fichero: Path,
                                       str(audio.get("codec", "")))
     arte = caratula_de(ffprobe, fichero)
 
+    # Lo mismo que mira el repaso de la biblioteca, para que una cancion suelta
+    # no salga "ya esta bien" de algo que la pasada completa si le arreglaria.
+    # Los dos motivos se curan igual, volviendo a escribirla, asi que se juntan
+    # en una sola pasada de ffmpeg.
+    motivos = []
+    if motivo:
+        motivos.append(f"bajar la calidad: {motivo}")
+    saltos = fotogramas_imposibles(fichero)
+    if saltos:
+        motivos.append(f"reencuadrar el audio: {saltos}")
+
     hecho = False
-    if motivo and codec_args:
-        partes.append(f"  - bajar la calidad: {motivo}")
+    if motivos and codec_args:
+        for razon in motivos:
+            partes.append(f"  - {razon}")
         if not cfg.dry_run:
             error = _reescribir(ffmpeg, fichero, codec_args, None, frecuencia,
                                 normalizar=False)
@@ -180,9 +193,11 @@ def fix_one_file(cfg: Config, fichero: Path,
                 partes.append(f"    NO SE PUDO: {error}")
             else:
                 hecho = True
-    elif motivo:
-        partes.append("  - habria que bajar la frecuencia, pero su formato no "
-                      "se toca desde aqui")
+    elif motivos:
+        for razon in motivos:
+            partes.append(f"  - habria que {razon}")
+        partes.append("    ...pero su formato no se vuelve a escribir desde "
+                      "aqui: se perderia calidad")
 
     if arte and arte not in ART_JPEG:
         partes.append(f"  - pasar la portada de {arte} a JPEG")
@@ -194,7 +209,7 @@ def fix_one_file(cfg: Config, fichero: Path,
             else:
                 hecho = True
 
-    if not motivo and (not arte or arte in ART_JPEG):
+    if not motivos and (not arte or arte in ART_JPEG):
         partes.append("  - nada: esta cancion ya esta bien")
     elif cfg.dry_run:
         partes.append("  (simulacion: no se ha tocado nada)")
