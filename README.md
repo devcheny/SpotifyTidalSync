@@ -421,6 +421,20 @@ ocuparía más.
 | **24 bits / 48 kHz** | 2304 kbps | Por defecto. El equilibrio, y lo más alto que un `.m4a` puede declarar en su cabecera. |
 | **16 bits / 44,1 kHz** | 1411 kbps | Calidad CD, lo que menos ocupa. |
 
+Con el techo en 24/48, esto es lo que le pasa a cada FLAC al convertirlo:
+
+| FLAC de origen | ALAC que sale |
+|---|---|
+| 16 bits / 44,1 kHz | **igual**, no se toca |
+| 24 bits / 44,1 kHz | **igual**, no se toca |
+| 24 bits / 48 kHz | **igual**, no se toca |
+| 24 bits / 96 kHz | 24 bits / 48 kHz |
+| 24 bits / 192 kHz | 24 bits / 48 kHz |
+
+Los bits solo bajan si eliges calidad CD; con el techo alto se conservan siempre.
+Y nunca se sube nada: un 16/44,1 no se convierte en 24/48, porque eso no añadiría
+nada que no estuviera ya y ocuparía el doble.
+
 No hay una tercera opción de «no bajar nada», y es a propósito: por encima de 48
 kHz el fichero no puede declarar su frecuencia, y eso no es una preferencia sino
 un fichero roto. Aunque elijas el techo alto, un `.m4a` nunca se escribe por

@@ -209,6 +209,23 @@ print("  sin normalizar    :", "-af" not in args)
 assert "-af" not in args, args
 print()
 
+# --- sin ffprobe no se empieza siquiera --------------------------------------
+# Sin saber como esta grabado el original no se puede decidir si hay que
+# bajarlo, y un 24/192 saldria con la frecuencia a cero en la cabecera, que es
+# lo que hace que otros programas se cierren al abrirlo.
+from stsync import convert as mod
+
+anterior = mod._buscar_ffprobe
+mod._buscar_ffprobe = lambda ffmpeg: None
+try:
+    FlacConverter(config(RAIZ), lambda m: None).run()
+    raise SystemExit("ERROR: sin ffprobe deberia negarse a empezar")
+except ConvertError as exc:
+    print("sin ffprobe:", str(exc)[:52], "...")
+    assert "ffprobe" in str(exc), exc
+finally:
+    mod._buscar_ffprobe = anterior
+
 shutil.rmtree(RAIZ)
 print()
 print("TODOS LOS ESCENARIOS OK")

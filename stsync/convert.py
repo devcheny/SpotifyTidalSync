@@ -169,6 +169,15 @@ class FlacConverter:
             raise ConvertError(
                 "No se encuentra ffmpeg. Instalalo con 'winget install Gyan.FFmpeg' "
                 "o indica su ruta en la pestana Convertir a ALAC.")
+        # Sin ffprobe no se sabe como esta grabado el original, y sin saberlo no
+        # se puede decidir si hay que bajarlo: un 24/192 saldria tal cual, con
+        # la frecuencia a cero en la cabecera. Mejor no empezar.
+        if not _buscar_ffprobe(ffmpeg):
+            raise ConvertError(
+                "No se encuentra ffprobe, que viene junto a ffmpeg. Hace falta "
+                "para saber como esta grabada cada cancion: sin el no se puede "
+                "decidir si hay que bajarle la calidad, y saldrian ficheros que "
+                "otros programas no saben abrir.")
 
         folder = Path(str(self.cfg.get("flac_folder", "")))
         if not folder.is_dir():
