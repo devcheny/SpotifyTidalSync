@@ -110,6 +110,48 @@ try:
 except ConvertError as exc:
     print("8.", exc)
 
+
+# ===========================================================================
+# La barrera: un .m4a no puede declarar mas de 65535 Hz
+# ===========================================================================
+from stsync.convert import args_calidad, comprobar_m4a
+
+m4a, flac = BANCO / "x.m4a", BANCO / "x.flac"
+
+# --- 9. con la casilla de calidad CD, todo lo alto baja a 44100 -------------
+args, motivo = args_calidad(192000, True, m4a)
+print("9.", args, "|", motivo)
+assert args == ["-ar", "44100", "-sample_fmt", "s16p"], args
+assert args_calidad(44100, True, m4a) == ([], ""), "ya esta a 44,1"
+
+# --- 10. sin ella, se capea igual: un .m4a a 192 kHz no es valido -----------
+args, motivo = args_calidad(192000, False, m4a)
+print("10.", args, "|", motivo)
+assert args == ["-ar", "48000"], args
+assert "no puede declarar" in motivo, motivo
+assert "-sample_fmt" not in args, "los 24 bits se respetan si no pides CD"
+assert args_calidad(48000, False, m4a) == ([], ""), "48000 si cabe"
+assert args_calidad(96000, False, flac) == ([], ""), \
+    "un FLAC no tiene ese problema: ahi 96 kHz esta bien"
+
+# --- 11. y si aun asi sale mal, se pilla antes de dar nada por bueno --------
+malo = BANCO / "cero.m4a"
+malo.write_bytes(bloque("ftyp", b"M4A ") + bloque("moov",
+    bloque("trak", bloque("mdia", bloque("minf", bloque("stbl",
+        bloque("stsd", b"\x00" * 8 + bloque("alac",
+            b"\x00" * 24 + b"\x00\x00\x00\x00" + b"\x00" * 8))))))))
+print("11.", comprobar_m4a(malo))
+assert "cero" in comprobar_m4a(malo), comprobar_m4a(malo)
+
+bien = BANCO / "bien.m4a"
+bien.write_bytes(bloque("ftyp", b"M4A ") + bloque("moov",
+    bloque("trak", bloque("mdia", bloque("minf", bloque("stbl",
+        bloque("stsd", b"\x00" * 8 + bloque("alac",
+            b"\x00" * 24 + b"\xac\x44\x00\x00" + b"\x00" * 8))))))))
+assert comprobar_m4a(bien) == "", comprobar_m4a(bien)
+assert comprobar_m4a(BANCO / "x.flac") == "", "un FLAC no se juzga por esto"
+print("    y un 44100 pasa el filtro")
+
 shutil.rmtree(BANCO, ignore_errors=True)
 print()
 print("EXAMINAR OK")

@@ -131,14 +131,23 @@ print("2. ultima orden de ffmpeg:", " ".join(orden[-8:]))
 assert "-ar" in orden and orden[orden.index("-ar") + 1] == "44100", orden
 assert "measured_I" in orden[orden.index("-af") + 1], "usa la medicion"
 
-# --- 3. sin bajar la calidad -------------------------------------------------
+# --- 3. sin bajar la calidad, pero sin pasarse de lo que un .m4a admite -----
+# Desmarcar la calidad CD no da derecho a escribir un .m4a invalido: por
+# encima de 48 kHz la cabecera no puede declarar su frecuencia y se queda a
+# cero, que es lo que hace que otros programas se cierren al abrirlo.
 montar()
-stats = normalize_library(config(flac_cd_quality=False), lambda m: None)
+LibreriaFalsa.canciones = [c for c in LibreriaFalsa.canciones
+                           if "hires" in c.Location]
+lineas = []
+stats = normalize_library(config(flac_cd_quality=False), lineas.append)
 print("3. sin bajar calidad -> normalizadas:", stats.normalizadas,
       "| bajadas:", stats.bajadas)
-assert stats.bajadas == 0, stats.bajadas
-assert stats.normalizadas == 2, "la de volumen bajo y el wav a ALAC"
-assert (BANCO / "hires-ok.m4a").read_bytes() == b"original hires", "no se toca"
+orden = (AQUI / "ultimo-comando.txt").read_text(encoding="utf-8").splitlines()
+assert stats.bajadas == 1, "la de 192 kHz hay que capearla igual"
+assert "-ar" in orden and orden[orden.index("-ar") + 1] == "48000", orden
+assert "-sample_fmt" not in orden, "los 24 bits si se respetan"
+assert any("no puede declarar" in l for l in lineas), "deberia decir por que"
+print("   la de 192 kHz baja a 48000 y conserva sus 24 bits")
 
 # --- 4. tambien los formatos con perdida ------------------------------------
 montar()

@@ -250,6 +250,43 @@ assert stats.bajadas == 0 and len(stats.fallidas) == 1, stats.summary()
 assert (BANCO / "hires-con-jpg.m4a").read_bytes() == b"original hires"
 assert not list(BANCO.glob(".*")), "no puede quedar ningun temporal"
 
+
+# ===========================================================================
+# Arreglar una sola cancion, para probar antes de soltarlo en 7000
+# ===========================================================================
+from stsync.artwork import fix_one_file
+
+# --- 12. una que necesita las dos cosas -------------------------------------
+montar()
+mala = BANCO / "hires-con-png.m4a"     # 192 kHz Y portada PNG
+mala.write_bytes(b"original mala")
+texto = fix_one_file(config(), mala, lambda m: None)
+print("12. lo que dice que hace:")
+for linea in texto.splitlines():
+    if linea.startswith("  - "):
+        print("   ", linea.strip())
+assert "bajar la frecuencia" in texto, texto
+assert "portada de png a JPEG" in texto, texto
+assert "ANTES" in texto and "DESPUES" in texto, "falta el antes y el despues"
+assert mala.read_bytes() != b"original mala", "no la ha tocado"
+
+# --- 13. una que ya esta bien: se dice y no se toca -------------------------
+buena = BANCO / "con-jpg.m4a"
+texto = fix_one_file(config(), buena, lambda m: None)
+print("13.", [l.strip() for l in texto.splitlines() if l.startswith("  - ")])
+assert "ya esta bien" in texto, texto
+assert buena.read_bytes() == b"original con-jpg.m4a", "la ha tocado"
+
+# --- 14. en simulacion dice lo que haria y no toca nada ---------------------
+montar()
+mala = BANCO / "hires-con-png.m4a"
+mala.write_bytes(b"original mala")
+texto = fix_one_file(config(dry_run=True), mala, lambda m: None)
+assert "simulacion" in texto, texto
+assert "DESPUES" not in texto, "no hay despues si no se ha hecho nada"
+assert mala.read_bytes() == b"original mala", "la ha tocado en simulacion"
+print("14. la simulacion dice lo que haria y no toca nada")
+
 shutil.rmtree(BANCO, ignore_errors=True)
 print()
 print("CARATULAS OK")
