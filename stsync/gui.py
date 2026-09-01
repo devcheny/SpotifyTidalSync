@@ -45,7 +45,7 @@ class App(tk.Tk):
         super().__init__()
         self.title("Spotify <-> TIDAL Sync")
         self.geometry("880x680")
-        self.minsize(760, 600)
+        self.minsize(560, 360)
         self.configure(bg=BG)
 
         self.cfg = Config.load()
@@ -57,9 +57,12 @@ class App(tk.Tk):
         self.stop_flag = threading.Event()
         self._release = None
         self._save_status_job: str | None = None
+        # Recuadros que se pueden desplazar con la rueda, de fuera a dentro.
+        self._scroll_canvas: list[tk.Canvas] = []
 
         self._build_styles()
         self._build_ui()
+        self.bind_all("<MouseWheel>", self._on_wheel)
         self._refresh_accounts()
         self._refresh_schedule()
         self.after(100, self._drain_queue)
@@ -110,6 +113,77 @@ class App(tk.Tk):
         style.map("Treeview.Heading", background=[("active", "#2b2e3c")])
 
     # ---------------------------------------------------------------------- UI
+    # -- pestanas con barra de desplazamiento --------------------------------
+    def _scrollable(self, notebook: ttk.Notebook) -> tuple[ttk.Frame, ttk.Frame]:
+        """Una pestana que se desplaza cuando su contenido no cabe.
+
+        Devuelve (lo que se anade al notebook, donde va el contenido).
+
+        Mientras quepa todo, el contenido ocupa el alto entero de la pestana,
+        asi que lo que estuviera puesto para estirarse -el registro de la
+        pestana principal- se sigue estirando y la barra ni aparece. En cuanto
+        no cabe, manda su alto natural y sale la barra: asi el boton de
+        instalar la actualizacion siempre se puede alcanzar, este la ventana
+        como este.
+        """
+        marco = ttk.Frame(notebook)
+        canvas = tk.Canvas(marco, bg=BG, highlightthickness=0)
+        barra = ttk.Scrollbar(marco, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=barra.set)
+        # La barra se empaqueta antes para que se quede a la derecha aunque se
+        # esconda y se vuelva a poner.
+        barra.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        dentro = ttk.Frame(canvas, padding=14)
+        ventana = canvas.create_window((0, 0), window=dentro, anchor="nw")
+        ultimo: dict[str, tuple[int, int]] = {}
+
+        def encajar(_event: tk.Event | None = None) -> None:
+            ancho, alto = canvas.winfo_width(), canvas.winfo_height()
+            if ancho <= 1 or alto <= 1:
+                return          # todavia no se ha dibujado
+            necesita = dentro.winfo_reqheight()
+            medida = (ancho, max(necesita, alto))
+            # Sin esto, cambiar el tamano dispara otro <Configure> y se
+            # entraria en bucle.
+            if ultimo.get("medida") == medida:
+                return
+            ultimo["medida"] = medida
+            canvas.itemconfigure(ventana, width=medida[0], height=medida[1])
+            canvas.configure(scrollregion=(0, 0, medida[0], medida[1]))
+            if necesita > alto:
+                if not barra.winfo_ismapped():
+                    barra.pack(side="right", fill="y", before=canvas)
+            elif barra.winfo_ismapped():
+                barra.pack_forget()
+
+        canvas.bind("<Configure>", encajar)
+        dentro.bind("<Configure>", encajar)
+        self._scroll_canvas.append(canvas)
+        return marco, dentro
+
+    def _on_wheel(self, event: tk.Event) -> None:
+        """Desplaza el recuadro que esta debajo del raton, no siempre el mismo.
+
+        Las listas de playlists son recuadros con scroll dentro de una pestana
+        que tambien lo tiene. Subiendo por los padres del widget senalado, el
+        de dentro gana; y si ese ya no tiene nada que desplazar, la rueda pasa
+        al de fuera en vez de quedarse muerta.
+        """
+        # Tk manda la rueda al widget con el foco, no al que hay debajo del
+        # raton, asi que hay que preguntar por las coordenadas. Si no contesta
+        # (el puntero esta sobre otro programa) se usa el que la recibio.
+        destino = self.winfo_containing(event.x_root, event.y_root) \
+            or getattr(event, "widget", None)
+        while destino is not None:
+            if destino in self._scroll_canvas:
+                primero, ultimo = destino.yview()
+                if (primero, ultimo) != (0.0, 1.0):
+                    destino.yview_scroll(-1 if event.delta > 0 else 1, "units")
+                    return
+            destino = getattr(destino, "master", None)
+
     def _build_ui(self) -> None:
         header = ttk.Frame(self, padding=(18, 14, 18, 6))
         header.pack(fill="x")
@@ -120,21 +194,21 @@ class App(tk.Tk):
 
         notebook = ttk.Notebook(self)
         notebook.pack(fill="both", expand=True, padx=18, pady=(4, 6))
-        self.tab_main = ttk.Frame(notebook, padding=14)
-        self.tab_itunes = ttk.Frame(notebook, padding=14)
-        self.tab_flac = ttk.Frame(notebook, padding=14)
-        self.tab_settings = ttk.Frame(notebook, padding=14)
+        pagina_main, self.tab_main = self._scrollable(notebook)
+        pagina_itunes, self.tab_itunes = self._scrollable(notebook)
+        pagina_flac, self.tab_flac = self._scrollable(notebook)
+        pagina_settings, self.tab_settings = self._scrollable(notebook)
         # Las dos pestanas de iTunes solo estorban en un equipo sin iTunes, asi
         # que solo se ensenan si esta instalado. Los controles se crean igual
         # (el resto de la ventana cuenta con ellos), pero no se anaden.
-        self.tab_publish = ttk.Frame(notebook, padding=14)
+        pagina_publish, self.tab_publish = self._scrollable(notebook)
         self.itunes_ok = itunes_diagnose()[0]
-        notebook.add(self.tab_main, text="Sincronizacion")
+        notebook.add(pagina_main, text="Sincronizacion")
         if self.itunes_ok:
-            notebook.add(self.tab_itunes, text="iTunes")
-            notebook.add(self.tab_publish, text="Publicar")
-            notebook.add(self.tab_flac, text="Convertir a ALAC")
-        notebook.add(self.tab_settings, text="Ajustes")
+            notebook.add(pagina_itunes, text="iTunes")
+            notebook.add(pagina_publish, text="Publicar")
+            notebook.add(pagina_flac, text="Convertir a ALAC")
+        notebook.add(pagina_settings, text="Ajustes")
 
         self._build_main_tab()
         self._build_itunes_tab()
@@ -217,6 +291,7 @@ class App(tk.Tk):
         self.pub_canvas.create_window((0, 0), window=self.pub_items, anchor="nw")
         self.pub_items.bind("<Configure>", lambda _e: self.pub_canvas.configure(
             scrollregion=self.pub_canvas.bbox("all")))
+        self._scroll_canvas.append(self.pub_canvas)
 
         self.pub_selection: dict[str, tk.BooleanVar] = {}
         self.pub_import: dict[str, tk.BooleanVar] = {}
@@ -411,7 +486,8 @@ class App(tk.Tk):
         log_frame = ttk.Frame(self.tab_main, style="Card.TFrame", padding=2)
         log_frame.pack(fill="both", expand=True)
         self.log_text = tk.Text(log_frame, bg="#0e0f16", fg="#cfd0dd", bd=0,
-                                font=("Consolas", 9), wrap="word", padx=10, pady=8,
+                                font=("Consolas", 9), wrap="word", height=10,
+                                padx=10, pady=8,
                                 insertbackground=FG, state="disabled")
         scroll = ttk.Scrollbar(log_frame, command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=scroll.set)
@@ -597,21 +673,15 @@ class App(tk.Tk):
             "<Configure>",
             lambda _e: self.itunes_canvas.configure(
                 scrollregion=self.itunes_canvas.bbox("all")))
-        # La rueda solo se apodera del scroll mientras el raton esta encima.
-        self.itunes_canvas.bind(
-            "<Enter>", lambda _e: self.itunes_canvas.bind_all("<MouseWheel>",
-                                                              self._scroll_itunes))
-        self.itunes_canvas.bind(
-            "<Leave>", lambda _e: self.itunes_canvas.unbind_all("<MouseWheel>"))
+        # La rueda la reparte _on_wheel: estando dentro de una pestana que
+        # tambien se desplaza, gana el recuadro de dentro.
+        self._scroll_canvas.append(self.itunes_canvas)
 
         self.itunes_selection: dict[str, tk.BooleanVar] = {}
         self.itunes_hint = ttk.Label(picker, text="", style="Muted.TLabel",
                                      wraplength=700, justify="left")
         self.itunes_hint.pack(anchor="w", pady=(6, 0))
         self._set_itunes_playlists(saved, checked=set(saved))
-
-    def _scroll_itunes(self, event: tk.Event) -> None:
-        self.itunes_canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
 
     def _set_itunes_playlists(self, names: list[str],
                               checked: set[str] | None = None) -> None:
