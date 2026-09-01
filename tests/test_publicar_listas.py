@@ -145,7 +145,7 @@ print()
 assert stats.playlists == 2, stats.playlists
 assert stats.creadas == 2, stats.creadas
 assert stats.anadidas == 2, stats.anadidas   # La Fama y Yesterday
-assert [n for n, _ in spotify.creadas] == ["Fiesta", "Otra Lista"], spotify.creadas
+assert [n for n, _ in spotify.creadas] == ["iTunes - Fiesta", "iTunes - Otra Lista"], spotify.creadas
 assert all(not publica for _, publica in spotify.creadas), "nadie pidio publicas"
 # La que no esta en el catalogo se apunta, no se inventa
 assert any("Cancion Rara" in c for _, c, _ in stats.sin_equivalencia), \
@@ -157,12 +157,12 @@ preparar()
 publish_playlists(config(publish_to_spotify=True, publish_public=["Fiesta"]),
                   TokensFalsos(), lambda m: None)
 print("2. creadas:", spotify.creadas)
-assert ("Fiesta", True) in spotify.creadas, spotify.creadas
-assert ("Otra Lista", False) in spotify.creadas, spotify.creadas
+assert ("iTunes - Fiesta", True) in spotify.creadas, spotify.creadas
+assert ("iTunes - Otra Lista", False) in spotify.creadas, spotify.creadas
 
 # --- 3. TIDAL sin ISRC no puede enlazar nada --------------------------------
 preparar()
-stats = publish_playlists(config(publish_to_tidal=True), TokensFalsos(),
+stats = publish_playlists(config(publish_to_tidal=True, publish_to_spotify=False), TokensFalsos(),
                           lambda m: None)
 print("3. a TIDAL sin ISRC -> anadidas:", stats.anadidas,
       "| sin equivalencia:", len(stats.sin_equivalencia))
@@ -175,7 +175,7 @@ preparar()
 original = mod._isrc_de          # se guarda: borrarla dejaria el modulo cojo
 mod._isrc_de = lambda com, ffprobe: "ES1234567890"
 try:
-    stats = publish_playlists(config(publish_to_tidal=True), TokensFalsos(),
+    stats = publish_playlists(config(publish_to_tidal=True, publish_to_spotify=False), TokensFalsos(),
                               lambda m: None)
 finally:
     mod._isrc_de = original
@@ -195,7 +195,8 @@ assert stats.creadas == 0, "la lista ya existia"
 # --- 6. sin destino ni playlists elegidas -----------------------------------
 from stsync.http import ApiError
 try:
-    publish_playlists(config(), TokensFalsos(), lambda m: None)
+    publish_playlists(config(publish_to_spotify=False), TokensFalsos(),
+                      lambda m: None)
     raise SystemExit("ERROR: sin destino deberia avisar")
 except ApiError as exc:
     print("6. sin destino:", exc)

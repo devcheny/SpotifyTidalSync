@@ -116,14 +116,16 @@ class ITunesLibrary:
         return None
 
     def user_playlists(self) -> list[Any]:
-        """Las playlists que has hecho tu, sin las inteligentes ni las del
-        sistema (Musica, Peliculas, Anadidos recientemente...)."""
+        """Las playlists que has hecho tu, sin las del sistema (Musica,
+        Peliculas, Anadidos recientemente...).
+
+        Las inteligentes entran: no se pueden modificar, pero si leer, que es
+        lo unico que hace falta para copiarlas fuera.
+        """
         out = []
         for item in _com_items(self.app.LibrarySource.Playlists):
             try:
                 if int(item.Kind) != 2 or int(item.SpecialKind) != 0:
-                    continue
-                if bool(item.Smart):
                     continue
                 if item.Name:
                     out.append(item)
@@ -513,10 +515,17 @@ class ITunesSync:
                  (self.cfg.get("itunes_playlists", []) or [])
         wanted = [normalize(n) for n in chosen if n]
 
+        # Lo que salio de iTunes no tiene que volver: si no, una lista tuya
+        # acabaria en TIDAL como "iTunes - Fiesta" y de vuelta aqui como
+        # "TIDAL - iTunes - Fiesta".
+        propio = normalize(str(self.cfg.get("publish_prefix", "")))
+
         out: list[dict[str, Any]] = []
         for raw in self._tidal_lists():
             name = (raw.get("attributes") or {}).get("name") or ""
             if not name or _is_missing_list(name):
+                continue
+            if propio and normalize(name).startswith(propio):
                 continue
             if wanted and normalize(name) not in wanted:
                 continue

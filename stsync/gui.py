@@ -19,7 +19,9 @@ from .convert import DONE_DIR, ConvertError, FlacConverter
 from .convert import diagnose as flac_diagnose
 from .http import ApiError
 from .itunes import ITunesError, complete_tags
+from .itunes import ITunesLibrary
 from .normalize import normalize_library
+from .publish import publish_playlists
 from .itunes import diagnose as itunes_diagnose
 from .oauth import OAuthError
 from .paths import app_dir, latest_report
@@ -124,17 +126,179 @@ class App(tk.Tk):
         # Las dos pestanas de iTunes solo estorban en un equipo sin iTunes, asi
         # que solo se ensenan si esta instalado. Los controles se crean igual
         # (el resto de la ventana cuenta con ellos), pero no se anaden.
+        self.tab_publish = ttk.Frame(notebook, padding=14)
         self.itunes_ok = itunes_diagnose()[0]
         notebook.add(self.tab_main, text="Sincronizacion")
         if self.itunes_ok:
             notebook.add(self.tab_itunes, text="iTunes")
+            notebook.add(self.tab_publish, text="Publicar")
             notebook.add(self.tab_flac, text="Convertir a ALAC")
         notebook.add(self.tab_settings, text="Ajustes")
 
         self._build_main_tab()
         self._build_itunes_tab()
+        self._build_publish_tab()
         self._build_flac_tab()
         self._build_settings_tab()
+
+    # -- pestana Publicar: de iTunes hacia fuera -----------------------------
+    def _build_publish_tab(self) -> None:
+        intro = ttk.Frame(self.tab_publish, style="Card.TFrame", padding=14)
+        intro.pack(fill="x")
+        ttk.Label(intro, text="Publicar tus listas de iTunes",
+                  style="Head.TLabel").pack(anchor="w")
+        ttk.Label(intro, text="Al reves que la pestana iTunes: coge tus listas "
+                              "locales y crea la misma en Spotify o en TIDAL, "
+                              "buscando alli cada cancion. Tu eliges cuales se "
+                              "llevan y cuales quedan publicas; por defecto "
+                              "ninguna lo es.",
+                  style="Muted.TLabel", wraplength=740,
+                  justify="left").pack(anchor="w", pady=(2, 8))
+        tk.Label(intro, text="En TIDAL solo se pueden enlazar las canciones cuyo "
+                             "ISRC venga en las etiquetas del fichero: su API no "
+                             "sabe buscar por titulo. En Spotify no hay ese "
+                             "problema.", bg=CARD, fg=MUTED, wraplength=740,
+                 justify="left").pack(anchor="w")
+
+        destinos = ttk.Frame(self.tab_publish, style="Card.TFrame", padding=14)
+        destinos.pack(fill="x", pady=(12, 0))
+        ttk.Label(destinos, text="Adonde", style="Card.TLabel").pack(anchor="w")
+        for clave, texto in (("publish_to_spotify", "Spotify"),
+                             ("publish_to_tidal", "TIDAL (solo con ISRC)")):
+            var = tk.BooleanVar(value=bool(self.cfg.get(clave)))
+            self.vars[clave] = var
+            ttk.Checkbutton(destinos, text=texto, variable=var).pack(anchor="w",
+                                                                    pady=1)
+
+        picker = ttk.Frame(self.tab_publish, style="Card.TFrame", padding=14)
+        picker.pack(fill="both", expand=True, pady=(12, 0))
+        head = ttk.Frame(picker, style="Card.TFrame")
+        head.pack(fill="x")
+        ttk.Label(head, text="Que listas, y cuales publicas",
+                  style="Card.TLabel").pack(side="left")
+        self.pub_load_button = ttk.Button(head, text="Cargar de iTunes",
+                                          command=self._load_itunes_lists)
+        self.pub_load_button.pack(side="right")
+
+        cabecera = ttk.Frame(picker, style="Card.TFrame")
+        cabecera.pack(fill="x", pady=(6, 2))
+        ttk.Label(cabecera, text="llevar", style="Muted.TLabel",
+                  width=8).pack(side="left")
+        ttk.Label(cabecera, text="publica", style="Muted.TLabel",
+                  width=9).pack(side="left")
+
+        caja = ttk.Frame(picker, style="Card.TFrame")
+        caja.pack(fill="both", expand=True)
+        self.pub_canvas = tk.Canvas(caja, bg=CARD, highlightthickness=0, height=150)
+        scroll = ttk.Scrollbar(caja, command=self.pub_canvas.yview)
+        self.pub_canvas.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="right", fill="y")
+        self.pub_canvas.pack(side="left", fill="both", expand=True)
+        self.pub_items = ttk.Frame(self.pub_canvas, style="Card.TFrame")
+        self.pub_canvas.create_window((0, 0), window=self.pub_items, anchor="nw")
+        self.pub_items.bind("<Configure>", lambda _e: self.pub_canvas.configure(
+            scrollregion=self.pub_canvas.bbox("all")))
+
+        self.pub_selection: dict[str, tk.BooleanVar] = {}
+        self.pub_public: dict[str, tk.BooleanVar] = {}
+        self.pub_hint = ttk.Label(picker, text="", style="Muted.TLabel")
+        self.pub_hint.pack(anchor="w", pady=(6, 0))
+        guardadas = list(self.cfg.get("publish_playlists") or [])
+        self._set_publish_lists(guardadas)
+
+        row = ttk.Frame(self.tab_publish)
+        row.pack(fill="x", pady=14)
+        self.publish_button = ttk.Button(row, text="Publicar ahora",
+                                         style="Accent.TButton",
+                                         command=self._start_publish)
+        self.publish_button.pack(side="left")
+        self.try_publish_button = ttk.Button(
+            row, text="Probar", width=8,
+            command=lambda: self._start_publish(simular=True))
+        self.try_publish_button.pack(side="left", padx=(8, 0))
+        ttk.Button(row, text="Guardar ajustes",
+                   command=self._save_settings).pack(side="left", padx=(8, 0))
+
+    def _set_publish_lists(self, nombres: list[str]) -> None:
+        """Repinta la lista conservando lo que estuviera marcado."""
+        marcadas = {n for n, v in self.pub_selection.items() if v.get()} or \
+            set(self.cfg.get("publish_playlists") or [])
+        publicas = {n for n, v in self.pub_public.items() if v.get()} or \
+            set(self.cfg.get("publish_public") or [])
+        for hijo in self.pub_items.winfo_children():
+            hijo.destroy()
+
+        self.pub_selection, self.pub_public = {}, {}
+        for nombre in sorted(set(nombres), key=str.casefold):
+            fila = ttk.Frame(self.pub_items, style="Card.TFrame")
+            fila.pack(anchor="w", fill="x")
+            llevar = tk.BooleanVar(value=nombre in marcadas)
+            publica = tk.BooleanVar(value=nombre in publicas)
+            self.pub_selection[nombre] = llevar
+            self.pub_public[nombre] = publica
+            ttk.Checkbutton(fila, variable=llevar, width=6).pack(side="left")
+            ttk.Checkbutton(fila, variable=publica, width=7).pack(side="left")
+            ttk.Label(fila, text=nombre, style="Card.TLabel").pack(side="left")
+        self.pub_hint.configure(
+            text=f"{len(nombres)} listas." if nombres
+            else "Pulsa 'Cargar de iTunes' para elegir.")
+
+    def _load_itunes_lists(self) -> None:
+        if self.worker and self.worker.is_alive():
+            return
+        self._set_busy(True)
+        self._append("Leyendo las playlists de iTunes...")
+        self.worker = threading.Thread(target=self._itunes_lists_reader,
+                                       daemon=True)
+        self.worker.start()
+
+    def _itunes_lists_reader(self) -> None:
+        try:
+            library = ITunesLibrary(self._q_log)
+            library.connect()
+            try:
+                nombres = [str(p.Name) for p in library.user_playlists()]
+            finally:
+                library.close()
+            self.queue.put(("itunes_lists", nombres))
+        except ITunesError as exc:
+            self.queue.put(("error", str(exc)))
+        except Exception as exc:  # noqa: BLE001
+            self.queue.put(("error", f"Error inesperado: {exc}"))
+        finally:
+            self.queue.put(("done", None))
+
+    def _start_publish(self, simular: bool = False) -> None:
+        if self.worker and self.worker.is_alive():
+            return
+        if not self._save_settings(silent=True):
+            return
+        elegidas = [n for n, v in self.pub_selection.items() if v.get()]
+        if not elegidas:
+            messagebox.showwarning("Nada que publicar",
+                                   "Marca al menos una lista en la columna "
+                                   "'llevar'.")
+            return
+        publicas = [n for n in elegidas if self.pub_public[n].get()]
+        if not simular and not self.cfg.dry_run and publicas and \
+                not messagebox.askyesno(
+                    "Listas publicas",
+                    "Estas listas quedaran visibles para cualquiera:\n\n  "
+                    + "\n  ".join(publicas[:10]) + "\n\n¿Seguimos?"):
+            return
+        self._lanzar(self._publish_worker, simular)
+
+    def _publish_worker(self, simular: bool = False) -> None:
+        try:
+            stats = publish_playlists(self._config_para(simular), self.tokens,
+                                      self._q_log, self.stop_flag.is_set)
+            self.queue.put(("ok", stats.summary()))
+        except (ApiError, ITunesError, OAuthError) as exc:
+            self.queue.put(("error", str(exc)))
+        except Exception as exc:  # noqa: BLE001
+            self.queue.put(("error", f"Error inesperado: {exc}"))
+        finally:
+            self.queue.put(("done", None))
 
     def _build_main_tab(self) -> None:
         accounts = ttk.Frame(self.tab_main)
@@ -1074,6 +1238,10 @@ class App(tk.Tk):
         # El prefijo se guarda tal cual: "TIDAL - " acaba en espacio a proposito.
         self.cfg.set("itunes_playlist_prefix", self.itunes_prefix_var.get())
         self.cfg.set("itunes_playlists", self._itunes_chosen())
+        elegidas = [n for n, v in self.pub_selection.items() if v.get()]
+        self.cfg.set("publish_playlists", elegidas)
+        self.cfg.set("publish_public",
+                     [n for n in elegidas if self.pub_public[n].get()])
         for code, label in _DIRECTIONS.items():
             if label == self.direction_var.get():
                 self.cfg.set("direction", code)
@@ -1160,7 +1328,7 @@ class App(tk.Tk):
     def _set_busy(self, busy: bool) -> None:
         for boton in (self.try_sync_button, self.try_itunes_button,
                       self.try_fix_button, self.try_flac_button,
-                      self.try_library_button):
+                      self.try_library_button, self.try_publish_button):
             boton.configure(state="disabled" if busy else "normal")
         self.sync_button.configure(state="disabled" if busy else "normal")
         self.itunes_button.configure(state="disabled" if busy else "normal")
@@ -1168,6 +1336,8 @@ class App(tk.Tk):
         self.fix_button.configure(state="disabled" if busy else "normal")
         self.flac_button.configure(state="disabled" if busy else "normal")
         self.library_button.configure(state="disabled" if busy else "normal")
+        self.publish_button.configure(state="disabled" if busy else "normal")
+        self.pub_load_button.configure(state="disabled" if busy else "normal")
         self.update_button.configure(state="disabled" if busy else "normal")
         self.sp_button.configure(state="disabled" if busy else "normal")
         self.td_button.configure(state="disabled" if busy else "normal")
@@ -1203,6 +1373,9 @@ class App(tk.Tk):
                 elif kind == "update_error":
                     self.update_button.configure(state="normal")
                     self.update_status.configure(text=str(payload), fg="#ff6b6b")
+                elif kind == "itunes_lists":
+                    self._set_publish_lists(list(payload))  # type: ignore[arg-type]
+                    self._append(f"{len(payload)} playlists leidas de iTunes.", "ok")
                 elif kind == "playlists":
                     self._on_itunes_playlists(list(payload))  # type: ignore[arg-type]
                 elif kind == "name":
