@@ -429,6 +429,23 @@ encima de 48 kHz.
 Si vienes de una versión anterior, la casilla de *calidad CD* se convierte sola:
 marcada pasa a «16/44,1», y desmarcada a «24/48».
 
+### Antes de machacar una canción
+
+Toda reescritura pasa por `comprobar_salida`, que mira el fichero nuevo **antes**
+de que sustituya al viejo. Que ffmpeg termine diciendo que todo ha ido bien no es
+prueba suficiente: pasó una vez que una conversión salió con la portada y sin
+pista de audio, ffmpeg contestó 0, y al sustituir se perdió el original.
+
+Se comprueban tres cosas, de la más grave a la menos:
+
+1. **Que siga habiendo audio.** Un `.m4a` con la portada y nada más pesa 60 KB y
+   se abre sin dar ningún error.
+2. **Que la cabecera declare su frecuencia**, no un 0 (lo de arriba).
+3. **Que dure lo mismo.** Bajar la calidad cambia lo que ocupa, nunca lo que dura.
+
+Si algo de eso falla, el fichero nuevo se tira, el viejo se queda donde estaba y
+la canción aparece en la lista de errores.
+
 **Examinar un fichero.** Cuando un reproductor se cierra al abrir una canción y no
 dice por qué, la única vía es poner al lado una que sí funcione y ver en qué se
 diferencian. Este botón cuenta todo lo que se sabe de un fichero: contenedor,

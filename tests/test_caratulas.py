@@ -54,7 +54,10 @@ assert args_caratula("") == ["-vn"], args_caratula("")
 assert "-c:v" in args_caratula("mjpeg") and "copy" in args_caratula("mjpeg")
 png = args_caratula("png")
 assert "mjpeg" in png and "copy" not in png, png
-assert "-frames:v" in png, "una portada es una imagen, no un video"
+assert "-disposition:v" in png and "attached_pic" in png, png
+# "-frames:v 1" se quito: limitar los fotogramas se llevo por delante
+# la pista de audio de una cancion de verdad.
+assert "-frames:v" not in png, png
 # Sin saber que trae, se recodifica: es lo unico seguro.
 assert "mjpeg" in args_caratula("desconocida")
 print("1. args_caratula: copia el JPEG, recodifica lo demas")
@@ -254,6 +257,46 @@ assert "simulacion" in texto, texto
 assert "DESPUES" not in texto, "no hay despues si no se ha hecho nada"
 assert mala.read_bytes() == b"original mala", "la ha tocado en simulacion"
 print("14. la simulacion dice lo que haria y no toca nada")
+
+
+# ===========================================================================
+# Lo mas importante de todo: que una cancion buena no se pierda
+# ===========================================================================
+# Paso de verdad: una conversion salio con la portada y sin audio, ffmpeg
+# termino diciendo que todo habia ido bien, y al sustituir se perdio el
+# original de 116 MB. Que ffmpeg conteste 0 no es prueba suficiente.
+# --- 15. si la salida sale sin audio, el original no se toca ---------------
+montar()
+mala = BANCO / "hires-con-jpg.m4a"
+mala.write_bytes(b"original que no se puede perder")
+LibreriaFalsa.canciones = [Com(mala)]
+
+os.environ["SIN_AUDIO"] = "1"
+try:
+    stats = downsample_library(config(), lambda m: None)
+finally:
+    del os.environ["SIN_AUDIO"]
+print("15.", stats.summary())
+assert stats.bajadas == 0, "no puede darla por buena"
+assert len(stats.fallidas) == 1, stats.fallidas
+assert "SIN pista de audio" in stats.fallidas[0][1], stats.fallidas
+assert mala.read_bytes() == b"original que no se puede perder", \
+    "LA CANCION SE HA PERDIDO: esto es exactamente lo que no puede pasar"
+assert not list(BANCO.glob(".*")), "no puede quedar ningun temporal"
+print("    el original sigue entero y se apunta el fallo")
+
+# --- 16. lo mismo por el lado de las caratulas -----------------------------
+montar()
+mala = BANCO / "con-png.m4a"
+antes = mala.read_bytes()
+os.environ["SIN_AUDIO"] = "1"
+try:
+    stats = check_artwork(config(), lambda m: None)
+finally:
+    del os.environ["SIN_AUDIO"]
+print("16. arregladas:", stats.arregladas, "| fallidas:", len(stats.fallidas))
+assert stats.arregladas == 0, stats.arregladas
+assert mala.read_bytes() == antes, "tampoco por aqui se puede perder nada"
 
 shutil.rmtree(BANCO, ignore_errors=True)
 print()

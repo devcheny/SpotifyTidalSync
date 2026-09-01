@@ -114,7 +114,7 @@ except ConvertError as exc:
 # ===========================================================================
 # La barrera: un .m4a no puede declarar mas de 65535 Hz
 # ===========================================================================
-from stsync.convert import args_calidad, comprobar_m4a
+from stsync.convert import args_calidad, comprobar_salida, duracion_mp4
 
 m4a, flac = BANCO / "x.m4a", BANCO / "x.flac"
 
@@ -142,17 +142,48 @@ malo.write_bytes(bloque("ftyp", b"M4A ") + bloque("moov",
     bloque("trak", bloque("mdia", bloque("minf", bloque("stbl",
         bloque("stsd", b"\x00" * 8 + bloque("alac",
             b"\x00" * 24 + b"\x00\x00\x00\x00" + b"\x00" * 8))))))))
-print("11.", comprobar_m4a(malo))
-assert "cero" in comprobar_m4a(malo), comprobar_m4a(malo)
+print("11.", comprobar_salida(malo))
+assert "cero" in comprobar_salida(malo), comprobar_salida(malo)
 
 bien = BANCO / "bien.m4a"
 bien.write_bytes(bloque("ftyp", b"M4A ") + bloque("moov",
     bloque("trak", bloque("mdia", bloque("minf", bloque("stbl",
         bloque("stsd", b"\x00" * 8 + bloque("alac",
             b"\x00" * 24 + b"\xac\x44\x00\x00" + b"\x00" * 8))))))))
-assert comprobar_m4a(bien) == "", comprobar_m4a(bien)
-assert comprobar_m4a(BANCO / "x.flac") == "", "un FLAC no se juzga por esto"
+assert comprobar_salida(bien) == "", comprobar_salida(bien)
+assert comprobar_salida(BANCO / "x.flac") == "", "un FLAC no se juzga por esto"
 print("    y un 44100 pasa el filtro")
+
+# --- 12. lo que de verdad hay que impedir: una salida sin audio -------------
+# Paso de verdad: una conversion salio con la portada y nada mas, ffmpeg dijo
+# que todo bien, y al sustituir se perdio la cancion original.
+sin_audio = BANCO / "solo-portada.m4a"
+sin_audio.write_bytes(bloque("ftyp", b"M4A ") + bloque("moov",
+    bloque("trak", bloque("mdia", bloque("minf", bloque("stbl",
+        bloque("stsd", b"\x00" * 8 + bloque("mjpg", b"\x00" * 40)))))))
+    + bloque("mdat", b"y" * 500))
+motivo = comprobar_salida(sin_audio)
+print("12.", motivo)
+assert "SIN pista de audio" in motivo, motivo
+
+# --- 13. y una que ha perdido la mitad por el camino ------------------------
+def con_duracion(nombre, segundos):
+    ruta = BANCO / nombre
+    mvhd = bloque("mvhd", bytes(12) + (1000).to_bytes(4, "big")
+                  + (segundos * 1000).to_bytes(4, "big") + bytes(80))
+    entrada = bloque("alac", b"\x00" * 24 + b"\xac\x44\x00\x00" + b"\x00" * 8)
+    stbl = bloque("stbl", bloque("stsd", b"\x00" * 8 + entrada))
+    trak = bloque("trak", bloque("mdia", bloque("minf", stbl)))
+    ruta.write_bytes(bloque("ftyp", b"M4A ") + bloque("moov", mvhd + trak))
+    return ruta
+
+
+largo, corto = con_duracion("larga.m4a", 240), con_duracion("corta.m4a", 12)
+assert duracion_mp4(largo) == 240, duracion_mp4(largo)
+motivo = comprobar_salida(corto, largo)
+print("13.", motivo)
+assert "dura 12s y el original 240s" in motivo, motivo
+assert comprobar_salida(largo, largo) == "", "la misma duracion tiene que pasar"
 
 shutil.rmtree(BANCO, ignore_errors=True)
 print()
