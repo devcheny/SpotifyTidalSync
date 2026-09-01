@@ -165,11 +165,12 @@ def fix_one_file(cfg: Config, fichero: Path,
     frecuencia, motivo = args_calidad(int(audio.get("rate", 0)),
                                       int(audio.get("bits", 0)),
                                       str(cfg.get("quality_target",
-                                                  POR_DEFECTO)), fichero)
+                                                  POR_DEFECTO)), fichero,
+                                      str(audio.get("codec", "")))
     arte = caratula_de(ffprobe, fichero)
 
     hecho = False
-    if frecuencia and codec_args:
+    if motivo and codec_args:
         partes.append(f"  - bajar la calidad: {motivo}")
         if not cfg.dry_run:
             error = _reescribir(ffmpeg, fichero, codec_args, None, frecuencia,
@@ -178,7 +179,7 @@ def fix_one_file(cfg: Config, fichero: Path,
                 partes.append(f"    NO SE PUDO: {error}")
             else:
                 hecho = True
-    elif frecuencia:
+    elif motivo:
         partes.append("  - habria que bajar la frecuencia, pero su formato no "
                       "se toca desde aqui")
 
@@ -192,7 +193,7 @@ def fix_one_file(cfg: Config, fichero: Path,
             else:
                 hecho = True
 
-    if not frecuencia and (not arte or arte in ART_JPEG):
+    if not motivo and (not arte or arte in ART_JPEG):
         partes.append("  - nada: esta cancion ya esta bien")
     elif cfg.dry_run:
         partes.append("  (simulacion: no se ha tocado nada)")

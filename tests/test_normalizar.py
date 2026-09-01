@@ -99,7 +99,8 @@ print("3. sin bajar calidad -> normalizadas:", stats.normalizadas,
 orden = (AQUI / "ultimo-comando.txt").read_text(encoding="utf-8").splitlines()
 assert stats.bajadas == 1, "la de 192 kHz hay que capearla igual"
 assert "-ar" in orden and orden[orden.index("-ar") + 1] == "48000", orden
-assert "-sample_fmt" not in orden, "los 24 bits si se respetan"
+assert orden[orden.index("-sample_fmt") + 1] == "s32p", \
+    "los 24 bits si se respetan: s32p es el ALAC de 24"
 assert any("192000 -> 48000 Hz" in l for l in lineas), "deberia decir el cambio"
 print("   con el techo de 24/48 baja a 48000 y conserva sus 24 bits")
 

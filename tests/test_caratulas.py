@@ -186,7 +186,8 @@ assert (BANCO / "con-jpg.m4a").read_bytes() == b"original con-jpg.m4a", \
     "esa ya estaba a 44,1 y no habia que tocarla"
 orden = (AQUI / "ultimo-comando.txt").read_text(encoding="utf-8").splitlines()
 assert "-ar" in orden and orden[orden.index("-ar") + 1] == "48000", orden
-assert "-sample_fmt" not in orden, "el techo de 24/48 conserva los bits"
+assert orden[orden.index("-sample_fmt") + 1] == "s32p", \
+    "el techo de 24/48 conserva los bits (s32p = ALAC de 24)"
 assert "-af" not in orden, "aqui no se normaliza: solo cambia la calidad"
 assert LibreriaFalsa.canciones[0].refrescada, "iTunes tiene que releerla"
 print("9. baja solo la de 192 kHz al techo, y sin tocar el volumen")

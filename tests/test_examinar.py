@@ -118,23 +118,35 @@ from stsync.convert import args_calidad, comprobar_salida, duracion_mp4
 
 m4a, flac = BANCO / "x.m4a", BANCO / "x.flac"
 
-# --- 9. con la casilla de calidad CD, todo lo alto baja a 44100 -------------
+# --- 9. con el techo en calidad CD, todo lo alto baja a 44100 --------------
 args, motivo = args_calidad(192000, 24, "cd", m4a)
 print("9.", args, "|", motivo)
 assert args == ["-ar", "44100", "-sample_fmt", "s16p"], args
-assert args_calidad(44100, 16, "cd", m4a) == ([], ""), "ya esta a 44,1"
+
+# La clave: los argumentos van SIEMPRE, tambien cuando no hay nada que bajar.
+# loudnorm saca a 192 kHz lo que le entre, asi que sin fijar la salida un
+# 44,1 acaba en 192 y la cabecera se queda a cero. El motivo vacio es lo que
+# dice "ya estaba bien", no la lista de argumentos.
+args, motivo = args_calidad(44100, 16, "cd", m4a)
+assert args == ["-ar", "44100", "-sample_fmt", "s16p"], args
+assert motivo == "", motivo
+print("   y un 44,1 se fija igual, que si no loudnorm lo sube a 192 kHz")
 
 # --- 10. con el techo de 24/48 baja la frecuencia y respeta los bits --------
 args, motivo = args_calidad(192000, 24, "48k", m4a)
 print("10.", args, "|", motivo)
-assert args == ["-ar", "48000"], args
+assert args == ["-ar", "48000", "-sample_fmt", "s32p"], args
 assert "192000 -> 48000 Hz" in motivo, motivo
-assert "-sample_fmt" not in args, "los 24 bits se respetan si no pides CD"
-assert args_calidad(48000, 24, "48k", m4a) == ([], ""), "48000 si cabe"
-assert args_calidad(96000, 24, "48k", flac)[0] == ["-ar", "48000"], \
-    "el techo vale para cualquier formato, no solo para los .m4a"
-assert args_calidad(44100, 16, "48k", m4a) == ([], ""), \
-    "por debajo del techo no se toca nada: subirla no anadiria nada"
+assert "24 -> " not in motivo, "los 24 bits se respetan si no pides CD"
+assert args_calidad(48000, 24, "48k", m4a)[1] == "", "48000 si cabe"
+assert args_calidad(96000, 24, "48k", flac, "flac")[0] == \
+    ["-ar", "48000", "-sample_fmt", "s32"], "cada codec nombra su formato"
+assert args_calidad(44100, 16, "48k", m4a)[1] == "", \
+    "por debajo del techo no se baja nada: subirla no anadiria nada"
+assert args_calidad(44100, 16, "48k", m4a)[0] == \
+    ["-ar", "44100", "-sample_fmt", "s16p"], "pero se fija igual"
+# A un MP3 no se le dice el formato de muestra: no le pinta nada.
+assert "-sample_fmt" not in args_calidad(44100, 16, "48k", m4a, "mp3")[0]
 
 # --- 11. y si aun asi sale mal, se pilla antes de dar nada por bueno --------
 malo = BANCO / "cero.m4a"

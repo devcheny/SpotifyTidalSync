@@ -59,6 +59,15 @@ OBJETIVOS_NOMBRE = {
 }
 POR_DEFECTO = "48k"
 
+# Como se llama el formato de muestra en cada codificador, para 16 y para 24
+# bits. El ALAC trabaja con muestras planares, de ahi la "p". Los que no
+# estan aqui no admiten que se les diga: a un PCM se lo fija su propio
+# nombre, y a uno con perdida no le pinta nada.
+FORMATO_MUESTRA = {
+    "alac": ("s16p", "s32p"),
+    "flac": ("s16", "s32"),
+}
+
 # Portadas que un .m4a admite tal cual. Lo demas (PNG, sobre todo) hay
 # que recodificarlo: ver args_caratula.
 ART_JPEG = {"mjpeg", "jpeg"}
@@ -286,7 +295,7 @@ class FlacConverter:
         audio = leer_audio(ffprobe, source) if ffprobe else {}
         extra, motivo = args_calidad(
             int(audio.get("rate", 0)), int(audio.get("bits", 0)),
-            str(self.cfg.get("quality_target", POR_DEFECTO)), target)
+            str(self.cfg.get("quality_target", POR_DEFECTO)), target, "alac")
         if motivo:
             self.log(f"      {motivo}")
         command += extra
@@ -569,37 +578,57 @@ def _etiquetas(tags: dict[str, Any], sangria: str) -> list[str]:
     return fuera
 
 
-def args_calidad(rate: int, bits: int, objetivo: str,
-                 destino: Path) -> tuple[list[str], str]:
-    """Hasta donde grabar, y por que. Lista vacia = dejarla como esta.
+def args_calidad(rate: int, bits: int, objetivo: str, destino: Path,
+                 codec: str = "alac") -> tuple[list[str], str]:
+    """Con que calidad grabar, y si eso supone bajarla.
 
-    Es un **techo**, nunca un objetivo: una cancion que ya venga por debajo se
-    queda como esta. Subirla no anadiria nada que no estuviera ya y solo
-    ocuparia mas.
+    Devuelve (argumentos para ffmpeg, motivo). El **motivo vacio significa que
+    la cancion ya estaba bien**, no que no haya argumentos: los argumentos van
+    siempre, y ese es justo el asunto.
 
-    El techo de frecuencia tiene ademas un tope que no es opcional: un .m4a
-    declara la suya en un campo de 16.16 bits, o sea hasta 65535 Hz. Por
-    encima, ffmpeg lo deja a cero y el fichero se vuelve veneno para todo el
-    que se fie de la cabecera. iTunes tira, pero rekordbox se cierra al
-    analizarlo. Por eso a un .m4a no se escribe nunca por encima de 48 kHz.
+    Porque `loudnorm` trabaja por dentro a 192 kHz y **saca a esa frecuencia
+    lo que le entre**. Si no se le fija la salida al codificador, un FLAC de
+    44,1 kHz acaba siendo un ALAC de 192 kHz que la cabecera de un .m4a no
+    puede declarar (ver comprobar_salida), y ese fichero cierra rekordbox al
+    analizarlo. Asi se estropearon las canciones. Por eso el -ar va siempre,
+    aunque no haya nada que bajar.
+
+    El techo es un techo, nunca un objetivo: lo que venga por debajo se queda
+    como esta. Subirlo no anadiria nada que no estuviera ya y ocuparia mas.
     """
     techo_rate, techo_bits = OBJETIVOS.get(objetivo, OBJETIVOS[POR_DEFECTO])
     if destino.suffix.lower() in CONTENEDOR_MP4:
+        # Un .m4a declara su frecuencia en un campo de 16.16 bits, o sea hasta
+        # 65535 Hz. Por encima ffmpeg lo deja a cero, y eso no es una
+        # preferencia: es un fichero que otros programas no saben abrir.
         techo_rate = min(techo_rate, MAX_M4A_RATE)
 
-    args: list[str] = []
-    motivos: list[str] = []
+    final_rate = min(rate, techo_rate) if rate else techo_rate
+    final_bits = min(bits, techo_bits) if bits else techo_bits
+
+    args = ["-ar", str(final_rate)]
+    formato = formato_de(codec, final_bits)
+    if formato:
+        args += ["-sample_fmt", formato]
+
+    cambios = []
     if rate and rate > techo_rate:
-        args += ["-ar", str(techo_rate)]
-        motivos.append(f"{rate} -> {techo_rate} Hz")
-    # Los bits solo se tocan para bajarlos: el formato de muestra que pone
-    # ffmpeg si no se le dice nada ya conserva los del origen.
-    if bits and techo_bits <= 16 and bits > techo_bits:
-        args += ["-sample_fmt", CD_FORMAT]
-        motivos.append(f"{bits} -> {techo_bits} bits")
-    if not args:
-        return [], ""
-    return args, f"{', '.join(motivos)} ({OBJETIVOS_NOMBRE[objetivo]})"
+        cambios.append(f"{rate} -> {final_rate} Hz")
+    if bits and bits > techo_bits:
+        cambios.append(f"{bits} -> {final_bits} bits")
+    if not cambios:
+        return args, ""
+    return args, f"{', '.join(cambios)} ({OBJETIVOS_NOMBRE[objetivo]})"
+
+
+def formato_de(codec: str, bits: int) -> str:
+    """Como llama cada codificador al formato de muestra que queremos.
+
+    Vacio para los que no admiten que se les diga: a un PCM se lo fija ya su
+    propio nombre, y a uno con perdida no le pinta nada.
+    """
+    par = FORMATO_MUESTRA.get(codec)
+    return "" if par is None else par[0 if bits <= 16 else 1]
 
 
 def comprobar_salida(salida: Path, original: Path | None = None) -> str:

@@ -195,8 +195,10 @@ def _revisar(track: Any, ffmpeg: str, ffprobe: str, cfg: Config,
     destino = fichero.with_suffix(".m4a") if a_m4a else fichero
     frecuencia, motivo_freq = args_calidad(int(audio.get("rate", 0)),
                                            int(audio.get("bits", 0)),
-                                           objetivo, destino)
-    bajar = bool(frecuencia)
+                                           objetivo, destino,
+                                           "alac" if a_m4a else codec)
+    # El motivo, no los argumentos: estos van siempre (ver args_calidad).
+    bajar = bool(motivo_freq)
     # Un WAV o un FLAC guardan lo mismo que un ALAC ocupando bastante mas, y
     # ademas iTunes no lee el FLAC: pasarlos merece la pena aunque suenen bien.
     a_alac = bool(cfg.get("library_to_alac", True)) and codec in SIN_PERDIDA \
@@ -325,8 +327,9 @@ def _bajar_una(track: Any, ffmpeg: str, ffprobe: str, cfg: Config,
     stats.revisadas += 1
     frecuencia, motivo = args_calidad(int(audio.get("rate", 0)),
                                       int(audio.get("bits", 0)),
-                                      objetivo, fichero)
-    if not frecuencia:
+                                      objetivo, fichero,
+                                      str(audio.get("codec", "")))
+    if not motivo:
         return
 
     stats.altas += 1

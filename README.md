@@ -440,6 +440,13 @@ kHz el fichero no puede declarar su frecuencia, y eso no es una preferencia sino
 un fichero roto. Aunque elijas el techo alto, un `.m4a` nunca se escribe por
 encima de 48 kHz.
 
+**La frecuencia de salida se fija siempre**, aunque no haya nada que bajar. No es
+manía: el filtro `loudnorm` de ffmpeg trabaja por dentro a **192 kHz y saca a esa
+frecuencia lo que le entre**. Sin fijar la salida, un FLAC de 44,1 kHz acaba
+siendo un ALAC de 192 kHz —que la cabecera de un `.m4a` no puede declarar— y ese
+fichero cierra rekordbox al analizarlo. Fue exactamente lo que estropeó las
+canciones: no venían de origen en alta resolución, **las subió el normalizador**.
+
 Si vienes de una versión anterior, la casilla de *calidad CD* se convierte sola:
 marcada pasa a «16/44,1», y desmarcada a «24/48».
 
