@@ -43,6 +43,22 @@ MEDIDAS = ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")
 CD_RATE = 44100
 CD_FORMAT = "s16p"
 
+# Hasta donde se graba, como techo. Ninguno sube nada: una cancion que ya venga
+# por debajo se queda igual.
+#
+#   cd   1411 kbps, lo que ocupa menos y suena a disco de toda la vida.
+#   48k  2304 kbps, la mitad justa de un 24/192 y el maximo que un .m4a puede
+#        declarar. El equilibrio entre lo que se oye y lo que ocupa.
+OBJETIVOS = {
+    "cd": (CD_RATE, 16),
+    "48k": (48000, 24),
+}
+OBJETIVOS_NOMBRE = {
+    "cd": "calidad CD, 16 bits / 44,1 kHz",
+    "48k": "24 bits / 48 kHz",
+}
+POR_DEFECTO = "48k"
+
 # Portadas que un .m4a admite tal cual. Lo demas (PNG, sobre todo) hay
 # que recodificarlo: ver args_caratula.
 ART_JPEG = {"mjpeg", "jpeg"}
@@ -53,7 +69,8 @@ ANIDAN = {b"moov", b"trak", b"mdia", b"minf", b"stbl", b"stsd"}
 # El indice de una cancion no llega a esto ni de lejos; el tope es por si
 # el fichero esta roto y dice medir un disparate.
 MAX_MOOV = 8 * 1024 * 1024
-# Contenedores con el problema del campo de 16.16 bits (ver args_calidad).
+# Los contenedores MP4, que son los que tienen el problema del campo de
+# 16.16 bits (ver args_calidad) y los unicos que exigen la portada en JPEG.
 CONTENEDOR_MP4 = (".m4a", ".mp4", ".m4b")
 # La frecuencia alta mas grande que cabe en ese campo. Por encima, el
 # fichero no puede declarar la suya.
@@ -248,9 +265,10 @@ class FlacConverter:
         # a 16/44,1 son los 1411 kbps de un CD. Y aunque no quieras bajarlo,
         # por encima de 48 kHz un .m4a no puede ni declarar su frecuencia.
         ffprobe = _buscar_ffprobe(ffmpeg)
-        rate = leer_audio(ffprobe, source).get("rate", 0) if ffprobe else 0
-        extra, motivo = args_calidad(rate, bool(self.cfg.get("flac_cd_quality",
-                                                             True)), target)
+        audio = leer_audio(ffprobe, source) if ffprobe else {}
+        extra, motivo = args_calidad(
+            int(audio.get("rate", 0)), int(audio.get("bits", 0)),
+            str(self.cfg.get("quality_target", POR_DEFECTO)), target)
         if motivo:
             self.log(f"      {motivo}")
         command += extra
@@ -447,7 +465,7 @@ def informe_fichero(cfg: Config, source: Path) -> str:
     lineas = [f"== {source.name} ==", f"  Carpeta: {source.parent}"]
     info = source.stat()
     fecha = dt.datetime.fromtimestamp(info.st_mtime)
-    lineas.append(f"  Tamano: {_human(info.st_size)}   "
+    lineas.append(f"  Tamano: {tamano_legible(info.st_size)}   "
                   f"Modificado: {fecha:%Y-%m-%d %H:%M}")
 
     datos = _sondear(ffprobe, source)
@@ -533,27 +551,37 @@ def _etiquetas(tags: dict[str, Any], sangria: str) -> list[str]:
     return fuera
 
 
-def args_calidad(rate: int, a_cd: bool, destino: Path) -> tuple[list[str], str]:
-    """A que frecuencia grabar, y por que. Lista vacia = dejarla como esta.
+def args_calidad(rate: int, bits: int, objetivo: str,
+                 destino: Path) -> tuple[list[str], str]:
+    """Hasta donde grabar, y por que. Lista vacia = dejarla como esta.
 
-    Hay dos motivos para bajarla, y el segundo no es opcional:
+    Es un **techo**, nunca un objetivo: una cancion que ya venga por debajo se
+    queda como esta. Subirla no anadiria nada que no estuviera ya y solo
+    ocuparia mas.
 
-    1. Lo pediste tu con la casilla de calidad CD.
-    2. **El fichero no seria valido**: un .m4a declara su frecuencia en un
-       campo de 16.16 bits, o sea hasta 65535 Hz. Por encima, ffmpeg lo deja a
-       cero y el fichero se vuelve veneno para todo el que se fie de la
-       cabecera. iTunes tira, pero rekordbox se cierra al analizarlo.
-
-    Por eso, aunque desmarques la calidad CD, a un .m4a no se escribe nunca por
-    encima de 48 kHz: es la frecuencia alta mas grande que cabe en ese campo.
+    El techo de frecuencia tiene ademas un tope que no es opcional: un .m4a
+    declara la suya en un campo de 16.16 bits, o sea hasta 65535 Hz. Por
+    encima, ffmpeg lo deja a cero y el fichero se vuelve veneno para todo el
+    que se fie de la cabecera. iTunes tira, pero rekordbox se cierra al
+    analizarlo. Por eso a un .m4a no se escribe nunca por encima de 48 kHz.
     """
-    if rate and a_cd and rate > CD_RATE:
-        return ["-ar", str(CD_RATE), "-sample_fmt", CD_FORMAT], "a calidad CD"
-    if rate > MAX_M4A_RATE and destino.suffix.lower() in CONTENEDOR_MP4:
-        return (["-ar", str(MAX_M4A_RATE)],
-                f"a {MAX_M4A_RATE} Hz a la fuerza: un .m4a no puede declarar "
-                f"los {rate} Hz de origen y el campo se quedaria a cero")
-    return [], ""
+    techo_rate, techo_bits = OBJETIVOS.get(objetivo, OBJETIVOS[POR_DEFECTO])
+    if destino.suffix.lower() in CONTENEDOR_MP4:
+        techo_rate = min(techo_rate, MAX_M4A_RATE)
+
+    args: list[str] = []
+    motivos: list[str] = []
+    if rate and rate > techo_rate:
+        args += ["-ar", str(techo_rate)]
+        motivos.append(f"{rate} -> {techo_rate} Hz")
+    # Los bits solo se tocan para bajarlos: el formato de muestra que pone
+    # ffmpeg si no se le dice nada ya conserva los del origen.
+    if bits and techo_bits <= 16 and bits > techo_bits:
+        args += ["-sample_fmt", CD_FORMAT]
+        motivos.append(f"{bits} -> {techo_bits} bits")
+    if not args:
+        return [], ""
+    return args, f"{', '.join(motivos)} ({OBJETIVOS_NOMBRE[objetivo]})"
 
 
 def comprobar_m4a(salida: Path) -> str:
@@ -751,12 +779,13 @@ def _numero(valor: Any) -> float:
         return 0.0
 
 
-def _human(size: int) -> str:
+def tamano_legible(size: float) -> str:
+    """Bytes en algo que se lea de un vistazo."""
     for unidad in ("B", "KB", "MB"):
         if size < 1024 or unidad == "MB":
-            return f"{size:.1f} {unidad}" if unidad != "B" else f"{size} B"
-        size /= 1024      # type: ignore[assignment]
-    return f"{size} B"
+            return f"{size:.0f} B" if unidad == "B" else f"{size:.1f} {unidad}"
+        size /= 1024.0
+    return f"{size:.1f} MB"
 
 
 def caratula_de(ffprobe: str, source: Path) -> str:
@@ -786,12 +815,6 @@ def args_caratula(codec: str) -> list[str]:
     salida = ["-c:v", "copy"] if codec in ART_JPEG else ["-c:v", "mjpeg", "-q:v", "2"]
     return ["-map", "0:v:0?"] + salida + ["-frames:v", "1",
                                           "-disposition:v", "attached_pic"]
-
-
-def supera_calidad_cd(audio: dict[str, Any]) -> bool:
-    """True si esta por encima de 16 bits / 44,1 kHz y se puede bajar."""
-    return bool(audio) and (audio.get("rate", 0) > CD_RATE
-                            or audio.get("bits", 0) > 16)
 
 
 def _leer_tags(ffprobe: str, source: Path) -> dict[str, str]:
@@ -847,11 +870,15 @@ def _mb(size: int) -> str:
     return f"{size / (1024 * 1024):.1f} MB"
 
 
+def nombre_libre(destino: Path) -> Path:
+    """Un nombre que no pise nada de lo que ya haya en esa carpeta."""
+    candidato, numero = destino, 2
+    while candidato.exists():
+        candidato = destino.with_name(f"{destino.stem} ({numero}){destino.suffix}")
+        numero += 1
+    return candidato
+
+
 def _free_name(folder: Path, stem: str, suffix: str = ".m4a") -> Path:
     """Un nombre libre en la carpeta: nunca se machaca lo que ya hay."""
-    candidate = folder / f"{stem}{suffix}"
-    number = 2
-    while candidate.exists():
-        candidate = folder / f"{stem} ({number}){suffix}"
-        number += 1
-    return candidate
+    return nombre_libre(folder / f"{stem}{suffix}")

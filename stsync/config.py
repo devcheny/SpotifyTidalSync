@@ -35,7 +35,11 @@ DEFAULTS: dict[str, Any] = {
     # aunque este fichero se copie con otra codificacion.
     "flac_folder": "C:\\Music\\iTunes\\iTunes Media\\"
                    "A\u00f1adir autom\u00e1ticamente a iTunes",
-    "flac_cd_quality": True,          # 16 bits / 44,1 kHz: 1411 kbps en vez de 9216
+    # Hasta donde se graba, como techo (ver convert.OBJETIVOS):
+    #   48k  24 bits / 48 kHz, 2304 kbps. El equilibrio, y lo maximo que un
+    #        .m4a puede declarar en su cabecera.
+    #   cd   16 bits / 44,1 kHz, 1411 kbps. Lo que menos ocupa.
+    "quality_target": "48k",
     "flac_normalize": True,           # loudnorm, como el flac2alac.bat de siempre
     "flac_two_pass": True,            # medir antes de normalizar (mas preciso)
     "flac_complete_tags": True,       # rellenar artista/titulo que falten
@@ -76,6 +80,20 @@ DEFAULTS: dict[str, Any] = {
 }
 
 
+def _migrar(data: dict[str, Any]) -> None:
+    """Trae a la forma de ahora los ajustes que tenian otra forma antes.
+
+    La calidad era una casilla de si o no ("calidad CD") y ahora es un techo
+    con dos alturas. Quien la tuviera marcada queria calidad CD y se queda con
+    ella; quien no, pasa al equilibrio de 24 bits / 48 kHz, que es lo mas alto
+    que un .m4a puede declarar (por encima, la cabecera se queda a cero y hay
+    programas que se cierran al abrirlo).
+    """
+    if "quality_target" not in data and "flac_cd_quality" in data:
+        data["quality_target"] = "cd" if data["flac_cd_quality"] else "48k"
+    data.pop("flac_cd_quality", None)
+
+
 @dataclass
 class Config:
     data: dict[str, Any] = field(default_factory=lambda: dict(DEFAULTS))
@@ -114,6 +132,7 @@ class Config:
                     data.update(stored)
             except (json.JSONDecodeError, OSError):
                 pass  # config corrupta -> se usan los valores por defecto
+        _migrar(data)
         cfg = cls(data)
         if not path.exists():
             cfg.save()
