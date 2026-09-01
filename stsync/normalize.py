@@ -17,9 +17,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .config import Config
-from .convert import (CD_FORMAT, CD_RATE, NO_WINDOW, TIMEOUT_S, ConvertError,
-                      args_caratula, caratula_de, find_ffmpeg, leer_audio,
-                      loudnorm_con, medir_volumen, supera_calidad_cd,
+from .convert import (CD_RATE, NO_WINDOW, TIMEOUT_S, ConvertError,
+                      args_calidad, args_caratula, caratula_de, comprobar_m4a,
+                      find_ffmpeg, leer_audio, loudnorm_con, medir_volumen,
                       volumen_actual, _buscar_ffprobe)
 from .itunes import ITunesError, ITunesLibrary, _com_items
 from .store import StateStore
@@ -178,7 +178,12 @@ def _revisar(track: Any, ffmpeg: str, ffprobe: str, cfg: Config,
     medida = medir_volumen(ffmpeg, fichero)
     ahora = volumen_actual(medida)
     fuera = ahora is None or not (minimo <= ahora <= maximo)
-    bajar = a_cd and supera_calidad_cd(audio)
+    # El destino sera .m4a si va a pasar a ALAC, y si no el mismo fichero.
+    a_m4a = codec != "alac" and bool(cfg.get("library_to_alac", True))
+    destino = fichero.with_suffix(".m4a") if a_m4a else fichero
+    frecuencia, motivo_freq = args_calidad(int(audio.get("rate", 0)), a_cd,
+                                           destino)
+    bajar = bool(frecuencia)
     # Un WAV o un FLAC guardan lo mismo que un ALAC ocupando bastante mas, y
     # ademas iTunes no lee el FLAC: pasarlos merece la pena aunque suenen bien.
     a_alac = bool(cfg.get("library_to_alac", True)) and codec in SIN_PERDIDA \
@@ -192,7 +197,8 @@ def _revisar(track: Any, ffmpeg: str, ffprobe: str, cfg: Config,
     if fuera:
         motivos.append(f"{ahora if ahora is not None else '?'} LUFS")
     if bajar:
-        motivos.append(f"{audio.get('rate')} Hz / {audio.get('bits')} bits")
+        motivos.append(f"{audio.get('rate')} Hz / {audio.get('bits')} bits, "
+                       f"{motivo_freq}")
     if a_alac:
         motivos.append(f"{codec} a alac")
     log(f"  ~ {fichero.name}  ({', '.join(motivos)})")
@@ -205,9 +211,10 @@ def _revisar(track: Any, ffmpeg: str, ffprobe: str, cfg: Config,
 
     final = fichero
     if a_alac:
-        error, final = _convertir_a_alac(ffmpeg, fichero, track, medida, bajar, log)
+        error, final = _convertir_a_alac(ffmpeg, fichero, track, medida,
+                                         frecuencia, log)
     else:
-        error = _reescribir(ffmpeg, fichero, codec_args, medida, bajar)
+        error = _reescribir(ffmpeg, fichero, codec_args, medida, frecuencia)
     if error:
         log(f"      no se pudo: {error}")
         stats.fallidas.append((fichero.name, error))
@@ -315,7 +322,8 @@ def _bajar_una(track: Any, ffmpeg: str, ffprobe: str, cfg: Config,
     if codec_args is None:
         return              # con perdida: bajarlo no ahorra y si estropea
     stats.revisadas += 1
-    if not supera_calidad_cd(audio):
+    frecuencia, motivo = args_calidad(int(audio.get("rate", 0)), True, fichero)
+    if not frecuencia:
         return
 
     stats.altas += 1
@@ -325,7 +333,7 @@ def _bajar_una(track: Any, ffmpeg: str, ffprobe: str, cfg: Config,
     if cfg.dry_run:
         return
 
-    error = _reescribir(ffmpeg, fichero, codec_args, None, True,
+    error = _reescribir(ffmpeg, fichero, codec_args, None, frecuencia,
                         normalizar=False)
     if error:
         log(f"      no se pudo: {error}")
@@ -430,7 +438,7 @@ def _fichero_de(track: Any) -> Path | None:
 
 
 def _convertir_a_alac(ffmpeg: str, fichero: Path, track: Any,
-                      medida: dict[str, str] | None, bajar: bool,
+                      medida: dict[str, str] | None, frecuencia: list[str],
                       log: Callable[[str], None]) -> tuple[str, Path]:
     """Pasa la cancion a ALAC y le dice a iTunes donde esta ahora.
 
@@ -440,7 +448,8 @@ def _convertir_a_alac(ffmpeg: str, fichero: Path, track: Any,
     que iTunes ha aceptado la ruta nueva.
     """
     nuevo = _nombre_libre(fichero.with_suffix(".m4a"))
-    error = _convertir(ffmpeg, fichero, nuevo, ["-c:a", "alac"], medida, bajar)
+    error = _convertir(ffmpeg, fichero, nuevo, ["-c:a", "alac"], medida,
+                       frecuencia)
     if error:
         return error, fichero
 
@@ -498,7 +507,7 @@ def _nombre_libre(destino: Path) -> Path:
 
 
 def _reescribir(ffmpeg: str, fichero: Path, codec_args: list[str],
-                medida: dict[str, str] | None, bajar: bool,
+                medida: dict[str, str] | None, frecuencia: list[str],
                 normalizar: bool = True) -> str:
     """Convierte a un temporal y solo entonces sustituye el original.
 
@@ -506,8 +515,8 @@ def _reescribir(ffmpeg: str, fichero: Path, codec_args: list[str],
     siempre no se toca hasta que hay uno nuevo entero.
     """
     temporal = fichero.with_name(f".{fichero.stem}.normalizando{fichero.suffix}")
-    error = _convertir(ffmpeg, fichero, temporal, codec_args, medida, bajar,
-                       normalizar)
+    error = _convertir(ffmpeg, fichero, temporal, codec_args, medida,
+                       frecuencia, normalizar)
     if error:
         return error
 
@@ -519,7 +528,7 @@ def _reescribir(ffmpeg: str, fichero: Path, codec_args: list[str],
 
 
 def _convertir(ffmpeg: str, entrada: Path, salida: Path, codec_args: list[str],
-               medida: dict[str, str] | None, bajar: bool,
+               medida: dict[str, str] | None, frecuencia: list[str],
                normalizar: bool = True) -> str:
     """Reescribe la cancion con el volumen arreglado. Devuelve "" si va bien.
 
@@ -542,9 +551,7 @@ def _convertir(ffmpeg: str, entrada: Path, salida: Path, codec_args: list[str],
         orden += args_caratula(arte) if con_caratula else ["-vn"]
         if normalizar:
             orden += ["-af", loudnorm_con(medida)]
-        orden += codec_args
-        if bajar:
-            orden += ["-ar", str(CD_RATE), "-sample_fmt", CD_FORMAT]
+        orden += codec_args + frecuencia
         if salida.suffix.lower() in (".m4a", ".mp4"):
             orden += ["-movflags", "+faststart"]
         orden += ["-map_metadata", "0", str(salida)]
@@ -558,7 +565,14 @@ def _convertir(ffmpeg: str, entrada: Path, salida: Path, codec_args: list[str],
             return str(exc)
 
         if hecho.returncode == 0 and salida.is_file() and salida.stat().st_size:
-            return ""
+            # ffmpeg puede terminar tan contento y dejar un .m4a que iTunes
+            # acepta pero otros programas no. Se comprueba antes de que llegue
+            # a sustituir al que ya estaba bien.
+            malo = comprobar_m4a(salida)
+            if not malo:
+                return ""
+            _borrar(salida)
+            return malo
 
         lineas = (hecho.stderr or "").strip().splitlines()
         detalle = lineas[-1] if lineas else "ffmpeg fallo"
