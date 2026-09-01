@@ -47,6 +47,8 @@ DEFAULTS: dict[str, Any] = {
     "library_to_alac": True,          # pasar WAV y FLAC de la biblioteca a ALAC
     "library_include_lossy": False,   # tocar tambien MP3 y demas
     "library_skip_done": True,        # no volver a medir lo ya repasado
+    "artwork_remove": False,          # al repasar caratulas, quitarlas
+                                      # en vez de pasarlas a JPEG
     "flac_after_sync": False,         # convertir al terminar la sincronizacion
     "flac_schedule_time": "04:00",    # o repaso propio, una hora despues
 
