@@ -387,6 +387,15 @@ está la casilla para **quitar la portada** en vez de convertirla.
 Desde esta versión el conversor y el repaso ya dejan la portada en JPEG por su
 cuenta, así que esto es solo para lo convertido antes.
 
+**Examinar un fichero.** Cuando un reproductor se cierra al abrir una canción y no
+dice por qué, la única vía es poner al lado una que sí funcione y ver en qué se
+diferencian. Este botón cuenta todo lo que se sabe de un fichero: contenedor,
+duración y bitrate reales, cada stream con su códec y su formato de muestra, todas
+las etiquetas (cortando las larguísimas, pero diciendo cuánto miden), si el índice
+`moov` va al principio o al final, **si el fichero llega entero o está cortado** —
+eso se ve leyendo sus bloques, sin decodificar nada— y por último decodifica el
+audio de cabo a rabo para ver si da errores.
+
 **Releer datos en iTunes.** Para cuando iTunes sigue diciendo *9216 kbps* de una
 canción que en disco ya está a 1411. No es un fallo de la conversión: iTunes se
 queda con lo que anotó el día que la importó, y el fichero solo se relee si se lo
