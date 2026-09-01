@@ -20,7 +20,8 @@ from .convert import diagnose as flac_diagnose
 from .http import ApiError
 from .itunes import ITunesError, complete_tags
 from .itunes import ITunesLibrary
-from .normalize import normalize_library
+from .artwork import check_artwork
+from .normalize import normalize_library, refresh_info
 from .publish import publish_playlists
 from .itunes import diagnose as itunes_diagnose
 from .oauth import OAuthError
@@ -808,6 +809,96 @@ class App(tk.Tk):
             command=lambda: self._start_library(simular=True))
         self.try_library_button.pack(side="left", padx=(8, 0))
 
+        self._build_artwork_box()
+
+    # -- caratulas y datos de iTunes -----------------------------------------
+    def _build_artwork_box(self) -> None:
+        caja = ttk.Frame(self.tab_flac, style="Card.TFrame", padding=14)
+        caja.pack(fill="x", pady=(12, 0))
+        ttk.Label(caja, text="Arreglar caratulas y refrescar iTunes",
+                  style="Head.TLabel").pack(anchor="w")
+        ttk.Label(caja, text="Un FLAC suele traer la portada en PNG, y dentro de "
+                             "un .m4a eso esta fuera de norma: iTunes la ensena "
+                             "igual, pero hay programas (rekordbox, por ejemplo) "
+                             "que se cierran sin decir nada al cargar la cancion. "
+                             "Esto la pasa a JPEG copiando el audio tal cual, sin "
+                             "recodificarlo: no se pierde ni un bit y va rapido.",
+                  style="Muted.TLabel", wraplength=740,
+                  justify="left").pack(anchor="w", pady=(2, 8))
+
+        quitar = tk.BooleanVar(value=bool(self.cfg.get("artwork_remove", False)))
+        self.vars["artwork_remove"] = quitar
+        ttk.Checkbutton(caja, variable=quitar,
+                        text="Quitar la portada en vez de convertirla (por si "
+                             "aun asi da problemas)").pack(anchor="w")
+
+        fila = ttk.Frame(caja, style="Card.TFrame")
+        fila.pack(anchor="w", pady=(10, 0))
+        self.art_button = ttk.Button(fila, text="Repasar caratulas",
+                                     command=self._start_artwork)
+        self.art_button.pack(side="left")
+        self.try_art_button = ttk.Button(
+            fila, text="Probar", width=8,
+            command=lambda: self._start_artwork(simular=True))
+        self.try_art_button.pack(side="left", padx=(8, 0))
+        self.refresh_button = ttk.Button(fila, text="Releer datos en iTunes",
+                                         command=self._start_refresh)
+        self.refresh_button.pack(side="left", padx=(20, 0))
+
+        ttk.Label(caja, text="Lo segundo es para cuando iTunes sigue diciendo "
+                             "9216 kbps de una cancion que ya esta en 1411: se "
+                             "queda con lo que anoto el dia que la importo, y "
+                             "esto le obliga a releer el fichero.",
+                  style="Muted.TLabel", wraplength=740,
+                  justify="left").pack(anchor="w", pady=(8, 0))
+
+    def _start_artwork(self, simular: bool = False) -> None:
+        if self.worker and self.worker.is_alive():
+            return
+        if not self._save_settings(silent=True):
+            return
+        if not simular and not self.cfg.dry_run and not messagebox.askyesno(
+                "Repasar caratulas",
+                "Se van a reescribir las canciones cuya portada no valga para "
+                "un .m4a.\n\n"
+                "El audio se copia tal cual, asi que no pierde calidad, pero "
+                "son tus ficheros.\n\n"
+                "Con el boton Probar ves antes cuantas son y que formato traen. "
+                "¿Seguimos?"):
+            return
+        self._lanzar(self._artwork_worker, simular)
+
+    def _artwork_worker(self, simular: bool = False) -> None:
+        try:
+            stats = check_artwork(self._config_para(simular), self._q_log,
+                                  self.stop_flag.is_set)
+            self.queue.put(("ok", stats.summary()))
+        except (ConvertError, ITunesError) as exc:
+            self.queue.put(("error", str(exc)))
+        except Exception as exc:  # noqa: BLE001
+            self.queue.put(("error", f"Error inesperado: {exc}"))
+        finally:
+            self.queue.put(("done", None))
+
+    def _start_refresh(self) -> None:
+        if self.worker and self.worker.is_alive():
+            return
+        if not self._save_settings(silent=True):
+            return
+        self._lanzar(self._refresh_worker, False)
+
+    def _refresh_worker(self, simular: bool = False) -> None:
+        try:
+            stats = refresh_info(self._config_para(simular), self._q_log,
+                                 self.stop_flag.is_set)
+            self.queue.put(("ok", stats.summary()))
+        except ITunesError as exc:
+            self.queue.put(("error", str(exc)))
+        except Exception as exc:  # noqa: BLE001
+            self.queue.put(("error", f"Error inesperado: {exc}"))
+        finally:
+            self.queue.put(("done", None))
+
     def _start_library(self, simular: bool = False) -> None:
         if self.worker and self.worker.is_alive():
             return
@@ -1421,7 +1512,8 @@ class App(tk.Tk):
     def _set_busy(self, busy: bool) -> None:
         for boton in (self.try_sync_button, self.try_itunes_button,
                       self.try_fix_button, self.try_flac_button,
-                      self.try_library_button, self.try_publish_button):
+                      self.try_library_button, self.try_publish_button,
+                      self.try_art_button):
             boton.configure(state="disabled" if busy else "normal")
         self.sync_button.configure(state="disabled" if busy else "normal")
         self.itunes_button.configure(state="disabled" if busy else "normal")
@@ -1429,6 +1521,8 @@ class App(tk.Tk):
         self.fix_button.configure(state="disabled" if busy else "normal")
         self.flac_button.configure(state="disabled" if busy else "normal")
         self.library_button.configure(state="disabled" if busy else "normal")
+        self.art_button.configure(state="disabled" if busy else "normal")
+        self.refresh_button.configure(state="disabled" if busy else "normal")
         self.publish_button.configure(state="disabled" if busy else "normal")
         self.pub_load_button.configure(state="disabled" if busy else "normal")
         self.update_button.configure(state="disabled" if busy else "normal")
