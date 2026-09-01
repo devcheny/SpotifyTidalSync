@@ -17,6 +17,7 @@ la caratula si el fichero la trae.
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 import re
@@ -395,6 +396,192 @@ def _entero(valor: Any) -> int:
         return int(valor)
     except (TypeError, ValueError):
         return 0
+
+
+def informe_fichero(cfg: Config, source: Path) -> str:
+    """Todo lo que se puede saber de un fichero, para comparar dos.
+
+    Cuando un reproductor se cierra al abrir una cancion y no dice por que, la
+    unica via es poner al lado una que si funcione y ver en que se diferencian.
+    Esto lo cuenta entero: contenedor, streams, etiquetas, si el indice va al
+    principio, si el fichero esta completo y si el audio se decodifica sin
+    errores de cabo a rabo.
+    """
+    ffmpeg = find_ffmpeg(str(cfg.get("ffmpeg_path", "")))
+    if not ffmpeg:
+        raise ConvertError("No se encuentra ffmpeg.")
+    ffprobe = _buscar_ffprobe(ffmpeg)
+    if not ffprobe:
+        raise ConvertError("No se encuentra ffprobe, que viene con ffmpeg.")
+    if not source.is_file():
+        raise ConvertError(f"No existe el fichero: {source}")
+
+    lineas = [f"== {source.name} ==", f"  Carpeta: {source.parent}"]
+    info = source.stat()
+    fecha = dt.datetime.fromtimestamp(info.st_mtime)
+    lineas.append(f"  Tamano: {_human(info.st_size)}   "
+                  f"Modificado: {fecha:%Y-%m-%d %H:%M}")
+
+    datos = _sondear(ffprobe, source)
+    formato = datos.get("format") or {}
+    streams = datos.get("streams") or []
+    if not formato and not streams:
+        lineas.append("")
+        lineas.append("  ffprobe no ha sabido leerlo: el fichero esta roto o no "
+                      "es lo que dice su extension.")
+        return "\n".join(lineas)
+
+    lineas.append("")
+    duracion = _numero(formato.get("duration"))
+    lineas.append(f"  Contenedor: {formato.get('format_name', '?')}   "
+                  f"Duracion: {int(duracion) // 60}:{int(duracion) % 60:02d}   "
+                  f"Bitrate: {_entero(formato.get('bit_rate')) // 1000} kbps")
+
+    lineas += _estructura_mp4(source)
+
+    for stream in streams:
+        lineas.append("")
+        indice = stream.get("index", "?")
+        tipo = stream.get("codec_type", "?")
+        lineas.append(f"  Stream {indice}  {tipo}  {stream.get('codec_name', '?')}"
+                      f"  (tag {stream.get('codec_tag_string', '?')})")
+        if tipo == "audio":
+            lineas.append(f"    {stream.get('sample_rate', '?')} Hz, "
+                          f"{stream.get('channels', '?')} canales "
+                          f"({stream.get('channel_layout', '?')}), "
+                          f"{stream.get('sample_fmt', '?')}, "
+                          f"{stream.get('bits_per_raw_sample') or '?'} bits")
+            inicio = _numero(stream.get("start_time"))
+            if inicio:
+                lineas.append(f"    OJO: no empieza en cero, sino en {inicio}s "
+                              "(el fichero lleva una lista de edicion)")
+        elif tipo == "video":
+            adjunta = (stream.get("disposition") or {}).get("attached_pic")
+            lineas.append(f"    {stream.get('width', '?')}x{stream.get('height', '?')}"
+                          f", marcada como portada: {'si' if adjunta else 'NO'}")
+        lineas += _etiquetas(stream.get("tags") or {}, "    ")
+
+    lineas.append("")
+    lineas.append("  Etiquetas del fichero:")
+    lineas += _etiquetas(formato.get("tags") or {}, "    ") or ["    (ninguna)"]
+
+    lineas.append("")
+    lineas.append("  Decodificando entero para ver si da errores...")
+    lineas += _decodificar(ffmpeg, source)
+    return "\n".join(lineas)
+
+
+def _sondear(ffprobe: str, source: Path) -> dict[str, Any]:
+    orden = [ffprobe, "-v", "quiet", "-print_format", "json", "-show_format",
+             "-show_streams", str(source)]
+    try:
+        salida = subprocess.run(orden, capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=120,
+                                creationflags=NO_WINDOW)
+        return json.loads(salida.stdout or "{}")
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return {}
+
+
+def _etiquetas(tags: dict[str, Any], sangria: str) -> list[str]:
+    """Las etiquetas, cortando las larguisimas pero diciendo cuanto miden.
+
+    Una letra entera o un cuesheet metidos en una etiqueta son de lo que mas
+    despista a un reproductor, y no se ven si no se miran a proposito.
+    """
+    fuera = []
+    for clave, valor in sorted(tags.items()):
+        texto = str(valor).replace("\n", " ")
+        if len(texto) > 90:
+            fuera.append(f"{sangria}{clave:<16} = [{len(texto)} caracteres] "
+                         f"{texto[:70]}...")
+        else:
+            fuera.append(f"{sangria}{clave:<16} = {texto}")
+    return fuera
+
+
+def _estructura_mp4(source: Path) -> list[str]:
+    """Los bloques de un .m4a: donde esta el indice y si el fichero llega entero."""
+    if source.suffix.lower() not in (".m4a", ".mp4", ".m4b"):
+        return []
+    bloques: list[tuple[str, int]] = []
+    truncado = False
+    try:
+        total = source.stat().st_size
+        with source.open("rb") as mano:
+            posicion = 0
+            while posicion < total:
+                cabecera = mano.read(8)
+                if len(cabecera) < 8:
+                    truncado = True
+                    break
+                tamano = int.from_bytes(cabecera[:4], "big")
+                tipo = cabecera[4:8].decode("latin-1", "replace")
+                if tamano == 1:                     # tamano de 64 bits
+                    tamano = int.from_bytes(mano.read(8), "big")
+                elif tamano == 0:                   # hasta el final
+                    tamano = total - posicion
+                if tamano < 8:
+                    truncado = True
+                    break
+                bloques.append((tipo, tamano))
+                if posicion + tamano > total:
+                    truncado = True
+                    break
+                posicion += tamano
+                mano.seek(posicion)
+    except OSError as exc:
+        return [f"  No se ha podido mirar la estructura: {exc}"]
+
+    if not bloques:
+        return ["  No parece un MP4: no tiene bloques reconocibles."]
+    nombres = [tipo for tipo, _ in bloques]
+    fuera = [f"  Bloques: {' '.join(nombres)}"]
+    if "moov" in nombres and "mdat" in nombres:
+        primero = nombres.index("moov") < nombres.index("mdat")
+        fuera.append(f"  El indice (moov) va al principio: "
+                     f"{'si' if primero else 'NO, va al final'}")
+    if truncado:
+        fuera.append("  OJO: el fichero esta CORTADO. El ultimo bloque dice "
+                     "medir mas de lo que hay.")
+    return fuera
+
+
+def _decodificar(ffmpeg: str, source: Path) -> list[str]:
+    """Decodifica el fichero entero sin guardar nada, y devuelve las quejas."""
+    orden = [ffmpeg, "-v", "error", "-hide_banner", "-i", str(source),
+             "-f", "null", "-"]
+    try:
+        hecho = subprocess.run(orden, capture_output=True, text=True,
+                               encoding="utf-8", errors="replace",
+                               timeout=TIMEOUT_S, creationflags=NO_WINDOW)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return [f"    no se ha podido comprobar: {exc}"]
+
+    quejas = [l for l in (hecho.stderr or "").strip().splitlines() if l.strip()]
+    if hecho.returncode == 0 and not quejas:
+        return ["    sin errores: el audio esta entero."]
+    fuera = [f"    {len(quejas)} errores al decodificar "
+             f"(ffmpeg termino con {hecho.returncode}):"]
+    fuera += [f"      {linea}" for linea in quejas[:20]]
+    if len(quejas) > 20:
+        fuera.append(f"      ... y {len(quejas) - 20} mas")
+    return fuera
+
+
+def _numero(valor: Any) -> float:
+    try:
+        return float(valor)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _human(size: int) -> str:
+    for unidad in ("B", "KB", "MB"):
+        if size < 1024 or unidad == "MB":
+            return f"{size:.1f} {unidad}" if unidad != "B" else f"{size} B"
+        size /= 1024      # type: ignore[assignment]
+    return f"{size} B"
 
 
 def caratula_de(ffprobe: str, source: Path) -> str:
