@@ -20,7 +20,7 @@ from .convert import diagnose as flac_diagnose
 from .http import ApiError
 from .itunes import ITunesError, complete_tags
 from .itunes import ITunesLibrary
-from .artwork import check_artwork
+from .artwork import check_artwork, fix_one_file
 from .normalize import (downsample_library, normalize_library,
                         refresh_info)
 from .publish import publish_playlists
@@ -870,6 +870,14 @@ class App(tk.Tk):
                              "(hay que recomprimirlos y pierden algo de calidad)"
                         ).pack(anchor="w")
 
+        # Al reves que las otras: la casilla dice lo que hay que hacer, no lo
+        # que se guarda. Marcarla es pedir que se repase todo otra vez.
+        self.rehacer_var = tk.BooleanVar(
+            value=not self.cfg.get("library_skip_done", True))
+        ttk.Checkbutton(caja, variable=self.rehacer_var,
+                        text="Repasar TODO otra vez, incluso lo ya repasado "
+                             "(mas lento, pero no se salta nada)").pack(anchor="w")
+
         fila = ttk.Frame(caja, style="Card.TFrame")
         fila.pack(anchor="w", pady=(10, 0))
         self.library_button = ttk.Button(fila, text="Repasar la biblioteca",
@@ -939,6 +947,9 @@ class App(tk.Tk):
         self.inspect_button = ttk.Button(fila, text="Examinar un fichero...",
                                          command=self._start_inspect)
         self.inspect_button.pack(side="left", padx=(8, 0))
+        self.fixone_button = ttk.Button(fila, text="Arreglar solo este...",
+                                        command=self._start_fix_one)
+        self.fixone_button.pack(side="left", padx=(8, 0))
 
         ttk.Label(caja, text="'Releer datos' es para cuando iTunes sigue diciendo "
                              "9216 kbps de una cancion que ya esta en 1411: se "
@@ -1011,18 +1022,51 @@ class App(tk.Tk):
         finally:
             self.queue.put(("done", None))
 
-    def _start_inspect(self) -> None:
+    def _elegir_cancion(self, titulo: str) -> Path | None:
         if self.worker and self.worker.is_alive():
-            return
+            return None
+        if not self._save_settings(silent=True):
+            return None
         inicial = str(self.cfg.get("flac_folder", "")) or ""
         elegido = filedialog.askopenfilename(
-            parent=self, title="Elige la cancion que quieres examinar",
+            parent=self, title=titulo,
             initialdir=inicial if Path(inicial).is_dir() else None,
             filetypes=[("Musica", "*.m4a *.mp3 *.flac *.wav *.aif *.aiff *.m4b"),
                        ("Todos", "*.*")])
-        if not elegido:
+        return Path(elegido) if elegido else None
+
+    def _start_fix_one(self) -> None:
+        """Probar el arreglo en una sola cancion antes de soltarlo en 7000."""
+        ruta = self._elegir_cancion("Elige la cancion que quieres arreglar")
+        if ruta is None:
             return
-        ruta = Path(elegido)
+        aviso = ("Se va a reescribir esta cancion:\n\n" + ruta.name
+                 + "\n\nSe le baja la frecuencia si no cabe en la cabecera y "
+                   "se le pasa la portada a JPEG si hace falta. Al terminar "
+                   "veras como estaba y como ha quedado.\n\n¿Seguimos?")
+        if not self.cfg.dry_run and \
+                not messagebox.askyesno("Arreglar solo este fichero", aviso):
+            return
+        self._set_busy(True)
+        self.worker = threading.Thread(target=self._fix_one_worker,
+                                       args=(ruta,), daemon=True)
+        self.worker.start()
+
+    def _fix_one_worker(self, ruta: Path) -> None:
+        try:
+            texto = fix_one_file(self.cfg, ruta, lambda _m: None)
+            self.queue.put(("informe", (ruta.name, texto)))
+        except (ConvertError, ITunesError) as exc:
+            self.queue.put(("error", str(exc)))
+        except Exception as exc:  # noqa: BLE001
+            self.queue.put(("error", f"Error inesperado: {exc}"))
+        finally:
+            self.queue.put(("done", None))
+
+    def _start_inspect(self) -> None:
+        ruta = self._elegir_cancion("Elige la cancion que quieres examinar")
+        if ruta is None:
+            return
         self._set_busy(True)
         self._append(f"Examinando {ruta.name}...")
         self.worker = threading.Thread(target=self._inspect_worker, args=(ruta,),
@@ -1569,6 +1613,7 @@ class App(tk.Tk):
             value = var.get()
             self.cfg.set(key, value.strip() if isinstance(value, str) else value)
         self.cfg.set("country_code", self.country_var.get().strip().upper() or "ES")
+        self.cfg.set("library_skip_done", not self.rehacer_var.get())
         self.cfg.set("match_duration_tolerance",
                      int(self.tolerance_var.get().strip() or 7))
         # El prefijo se guarda tal cual: "TIDAL - " acaba en espacio a proposito.
@@ -1672,7 +1717,8 @@ class App(tk.Tk):
         for boton in (self.try_sync_button, self.try_itunes_button,
                       self.try_fix_button, self.try_flac_button,
                       self.try_library_button, self.try_publish_button,
-                      self.try_art_button, self.try_down_button):
+                      self.try_art_button, self.try_down_button,
+                      self.fixone_button):
             boton.configure(state="disabled" if busy else "normal")
         self.sync_button.configure(state="disabled" if busy else "normal")
         self.itunes_button.configure(state="disabled" if busy else "normal")
