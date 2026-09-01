@@ -15,7 +15,8 @@ from urllib.parse import urlparse
 
 from . import scheduler
 from .config import Config
-from .convert import (DONE_DIR, ConvertError, FlacConverter, informe_fichero)
+from .convert import (DONE_DIR, OBJETIVOS_NOMBRE, POR_DEFECTO, ConvertError,
+                      FlacConverter, informe_fichero, tamano_legible)
 from .convert import diagnose as flac_diagnose
 from .http import ApiError
 from .itunes import ITunesError, complete_tags
@@ -791,9 +792,6 @@ class App(tk.Tk):
             ("flac_after_sync",
              "Convertir al terminar la sincronizacion, lo ultimo de la cola "
              "(y en la tarea programada)"),
-            ("flac_cd_quality",
-             "Calidad CD: 16 bits y 44,1 kHz (1411 kbps). Sin esto, un FLAC de "
-             "24/192 sale a 9216 kbps y ocupa 6 veces mas"),
             ("flac_normalize",
              "Normalizar el volumen (loudnorm, como el flac2alac.bat de siempre)"),
             ("flac_two_pass",
@@ -810,6 +808,27 @@ class App(tk.Tk):
             self.vars[key] = var
             ttk.Checkbutton(options, text=text, variable=var).pack(anchor="w",
                                                                    pady=2)
+
+        calidad = ttk.Frame(options, style="Card.TFrame")
+        calidad.pack(anchor="w", pady=(12, 0))
+        ttk.Label(calidad, text="Hasta que calidad se graba",
+                  style="Card.TLabel").pack(anchor="w")
+        tk.Label(calidad, text="Es un techo, no un objetivo: lo que ya venga "
+                               "por debajo se queda como esta. Vale para el "
+                               "conversor y para las dos pasadas de la "
+                               "biblioteca.",
+                 bg=CARD, fg=MUTED, wraplength=700,
+                 justify="left").pack(anchor="w", pady=(2, 6))
+        self.calidad_var = tk.StringVar(
+            value=str(self.cfg.get("quality_target", POR_DEFECTO)))
+        for clave, texto in (
+            ("48k", "24 bits / 48 kHz  (2304 kbps) - el equilibrio, y lo mas "
+                    "alto que un .m4a puede declarar"),
+            ("cd", "16 bits / 44,1 kHz  (1411 kbps) - calidad CD, lo que menos "
+                   "ocupa"),
+        ):
+            ttk.Radiobutton(calidad, text=texto, value=clave,
+                            variable=self.calidad_var).pack(anchor="w", pady=1)
 
         sched = ttk.Frame(options, style="Card.TFrame")
         sched.pack(fill="x", pady=(12, 0))
@@ -907,7 +926,7 @@ class App(tk.Tk):
 
         fila_cd = ttk.Frame(caja, style="Card.TFrame")
         fila_cd.pack(anchor="w", pady=(0, 10))
-        self.down_button = ttk.Button(fila_cd, text="Bajar a calidad CD",
+        self.down_button = ttk.Button(fila_cd, text="Bajar la calidad de lo alto",
                                       style="Accent.TButton",
                                       command=self._start_downsample)
         self.down_button.pack(side="left")
@@ -915,16 +934,10 @@ class App(tk.Tk):
             fila_cd, text="Probar", width=8,
             command=lambda: self._start_downsample(simular=True))
         self.try_down_button.pack(side="left", padx=(8, 0))
-        tk.Label(caja, text="Una cancion de 24 bits y 192 kHz no se puede "
-                            "declarar en un .m4a: ese campo de la cabecera "
-                            "solo llega a 65535 Hz, asi que se queda a CERO. "
-                            "iTunes tira igual, pero rekordbox se cierra al "
-                            "analizarla. Bajarla a 44,1 kHz lo arregla, y de "
-                            "paso ocupa cinco veces menos. Aqui no se mide el "
-                            "volumen: solo cambia la frecuencia, asi que va "
-                            "rapido.",
-                 bg=CARD, fg=MUTED, wraplength=740,
-                 justify="left").pack(anchor="w", pady=(0, 12))
+        self.down_label = tk.Label(
+            caja, text="", bg=CARD, fg=MUTED, wraplength=740, justify="left")
+        self.down_label.pack(anchor="w", pady=(0, 12))
+        self._refresh_calidad()
 
         quitar = tk.BooleanVar(value=bool(self.cfg.get("artwork_remove", False)))
         self.vars["artwork_remove"] = quitar
@@ -994,17 +1007,29 @@ class App(tk.Tk):
         finally:
             self.queue.put(("done", None))
 
+    def _refresh_calidad(self) -> None:
+        """El texto del boton cuenta el techo que hay elegido ahora mismo."""
+        objetivo = self.calidad_var.get()
+        self.down_label.configure(
+            text="Una cancion de 24 bits y 192 kHz no se puede declarar en un "
+                 ".m4a: ese campo de la cabecera solo llega a 65535 Hz, asi "
+                 "que se queda a CERO. iTunes tira igual, pero rekordbox se "
+                 "cierra al analizarla. Esto reescribe lo que pase del techo "
+                 f"que tengas puesto ({OBJETIVOS_NOMBRE.get(objetivo, objetivo)}"
+                 "), y de paso ocupa bastante menos. No se mide el volumen: "
+                 "solo cambia la calidad, asi que va rapido.")
+
     def _start_downsample(self, simular: bool = False) -> None:
         if self.worker and self.worker.is_alive():
             return
         if not self._save_settings(silent=True):
             return
         if not simular and not self.cfg.dry_run and not messagebox.askyesno(
-                "Bajar a calidad CD",
-                "Se van a reescribir las canciones grabadas por encima de "
-                "16 bits / 44,1 kHz.\n\n"
+                "Bajar la calidad de lo alto",
+                "Se van a reescribir las canciones que pasen del techo que "
+                "tienes elegido arriba.\n\n"
                 "El volumen se queda como esta: aqui solo cambia la "
-                "frecuencia.\n\n"
+                "calidad.\n\n"
                 "Con el boton Probar ves antes cuantas son y cuanto ocupan. "
                 "¿Seguimos?"):
             return
@@ -1614,6 +1639,7 @@ class App(tk.Tk):
             self.cfg.set(key, value.strip() if isinstance(value, str) else value)
         self.cfg.set("country_code", self.country_var.get().strip().upper() or "ES")
         self.cfg.set("library_skip_done", not self.rehacer_var.get())
+        self.cfg.set("quality_target", self.calidad_var.get())
         self.cfg.set("match_duration_tolerance",
                      int(self.tolerance_var.get().strip() or 7))
         # El prefijo se guarda tal cual: "TIDAL - " acaba en espacio a proposito.
@@ -1646,6 +1672,7 @@ class App(tk.Tk):
         self._show_save_status("Ajustes guardados", ok=True)
         self._append("Ajustes guardados.", "ok")
         self._refresh_flac_status()   # la ruta de ffmpeg puede haber cambiado
+        self._refresh_calidad()
         return True
 
     def _itunes_chosen(self) -> list[str]:
@@ -1856,7 +1883,7 @@ class DataFolderWindow(tk.Toplevel):
             self.files.append(path)
             self.tree.insert("", "end", values=(
                 str(path.relative_to(self.folder)),
-                _human_size(info.st_size),
+                tamano_legible(info.st_size),
                 dt.datetime.fromtimestamp(info.st_mtime).strftime("%d/%m/%Y %H:%M"),
             ))
         if not self.files:
@@ -1941,14 +1968,6 @@ class TextWindow(tk.Toplevel):
         ttk.Button(self, text="Cerrar", command=self.destroy).pack(pady=(0, 12))
         self.transient(app)
         self.bind("<Escape>", lambda _e: self.destroy())
-
-
-def _human_size(size: int) -> str:
-    for unit in ("B", "KB", "MB"):
-        if size < 1024 or unit == "MB":
-            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
-        size /= 1024.0
-    return f"{size:.1f} MB"
 
 
 class ReportWindow(tk.Toplevel):
