@@ -42,6 +42,10 @@ MEDIDAS = ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")
 CD_RATE = 44100
 CD_FORMAT = "s16p"
 
+# Portadas que un .m4a admite tal cual. Lo demas (PNG, sobre todo) hay
+# que recodificarlo: ver args_caratula.
+ART_JPEG = {"mjpeg", "jpeg"}
+
 # Lo que se convierte a ALAC: formatos sin perdida que iTunes o no lee, o lee
 # ocupando de mas. Los de con perdida (mp3, ogg, opus, wma) no entran: pasarlos
 # a ALAC no devuelve la calidad que ya perdieron y encima ocuparian el triple.
@@ -207,8 +211,11 @@ class FlacConverter:
         command = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
                    "-i", str(source), "-map", "0:a:0"]
         if keep_art:
-            command += ["-map", "0:v:0?", "-c:v", "copy",
-                        "-disposition:v", "attached_pic"]
+            ffprobe = _buscar_ffprobe(ffmpeg)
+            # Sin ffprobe no se sabe que trae, y ante la duda se recodifica:
+            # es lo unico que garantiza un .m4a que abra en cualquier sitio.
+            command += args_caratula(caratula_de(ffprobe, source) if ffprobe
+                                     else "desconocida")
         else:
             command += ["-vn"]
         for campo, valor in self._tags_que_faltan(ffmpeg, source).items():
@@ -388,6 +395,35 @@ def _entero(valor: Any) -> int:
         return int(valor)
     except (TypeError, ValueError):
         return 0
+
+
+def caratula_de(ffprobe: str, source: Path) -> str:
+    """Con que formato viene la portada dentro del fichero ("" si no trae)."""
+    orden = [ffprobe, "-v", "quiet", "-print_format", "json", "-show_streams",
+             "-select_streams", "v:0", str(source)]
+    try:
+        salida = subprocess.run(orden, capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=60,
+                                creationflags=NO_WINDOW)
+        streams = json.loads(salida.stdout or "{}").get("streams") or []
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return ""
+    return str(streams[0].get("codec_name") or "") if streams else ""
+
+
+def args_caratula(codec: str) -> list[str]:
+    """Como meter la portada en un .m4a sin que quede fuera de norma.
+
+    Un FLAC suele traerla en PNG, y en un MP4 la portada va en JPEG. Copiarla
+    tal cual deja un fichero que iTunes se traga pero que otros programas no:
+    rekordbox, sin ir mas lejos, se cierra al cargarlo. Si ya viene en JPEG se
+    copia sin tocarla; si no, se recodifica, que en una caratula no se nota.
+    """
+    if not codec:
+        return ["-vn"]
+    salida = ["-c:v", "copy"] if codec in ART_JPEG else ["-c:v", "mjpeg", "-q:v", "2"]
+    return ["-map", "0:v:0?"] + salida + ["-frames:v", "1",
+                                          "-disposition:v", "attached_pic"]
 
 
 def supera_calidad_cd(audio: dict[str, Any]) -> bool:
