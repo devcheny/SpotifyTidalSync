@@ -21,6 +21,7 @@ from .convert import (CD_FORMAT, CD_RATE, NO_WINDOW, TIMEOUT_S, ConvertError,
                       find_ffmpeg, leer_audio, loudnorm_con, medir_volumen,
                       supera_calidad_cd, volumen_actual, _buscar_ffprobe)
 from .itunes import ITunesError, ITunesLibrary, _com_items
+from .store import StateStore
 
 # Como volver a guardar cada formato. Los de la izquierda no pierden calidad al
 # reescribirse; los de abajo si, porque hay que volver a comprimir.
@@ -49,6 +50,7 @@ class LibraryStats:
     bajadas: int = 0            # ademas, pasadas a calidad CD
     a_alac: int = 0             # ademas, convertidas de WAV/FLAC a ALAC
     ya_estaban: int = 0
+    ya_hechas: int = 0          # repasadas en una pasada anterior
     saltadas: int = 0           # sin fichero, o formato que no se toca
     sin_refrescar: int = 0      # cambiadas, pero iTunes no releyo sus datos
     fallidas: list[tuple[str, str]] = field(default_factory=list)
@@ -58,6 +60,7 @@ class LibraryStats:
                  f"{self.normalizadas} normalizadas ({self.bajadas} ademas "
                  f"bajadas a calidad CD, {self.a_alac} pasadas a ALAC) | "
                  f"{self.ya_estaban} ya estaban bien | "
+                 f"{self.ya_hechas} de antes | "
                  f"{self.saltadas} sin tocar")
         if self.fallidas:
             texto += f" | {len(self.fallidas)} con error"
@@ -98,6 +101,20 @@ def normalize_library(cfg: Config, log: Callable[[str], None],
     if not con_perdida:
         log("  los MP3 y demas formatos con perdida se dejan como estan")
 
+    # Lo ya repasado se apunta, porque medir es lo que cuesta: sin esto, una
+    # segunda pasada vuelve a decodificar la biblioteca entera para nada.
+    state = StateStore()
+    huella = _huella(minimo, maximo, a_cd, con_perdida,
+                     bool(cfg.get("library_to_alac", True)))
+    saltar = bool(cfg.get("library_skip_done", True))
+    hechas: dict[str, str] = {}
+    if saltar and state.data.get("library_huella") == huella:
+        hechas = dict(state.data.get("library_ok") or {})
+        if hechas:
+            log(f"  {len(hechas)} ya repasadas en su dia: no se vuelven a medir")
+    elif state.data.get("library_huella"):
+        log("  los ajustes han cambiado, asi que se repasa todo otra vez")
+
     library = ITunesLibrary(log)
     library.connect()
     try:
@@ -110,9 +127,10 @@ def normalize_library(cfg: Config, log: Callable[[str], None],
                 break
             if numero % 100 == 0:
                 log(f"    {numero}/{total}... ({stats.normalizadas} arregladas)")
+                _guardar(state, hechas, huella)
             try:
                 _revisar(track, ffmpeg, ffprobe, cfg, minimo, maximo, a_cd,
-                         con_perdida, log, stats)
+                         con_perdida, log, stats, hechas if saltar else None)
             except ConvertError:
                 raise           # sin disco: parar de verdad
             except Exception as exc:  # noqa: BLE001
@@ -121,6 +139,8 @@ def normalize_library(cfg: Config, log: Callable[[str], None],
                 stats.fallidas.append((f"cancion {numero}", str(exc)))
     finally:
         library.close()
+        # Tambien si se corta a medias: lo hecho hasta aqui no se repite.
+        _guardar(state, hechas, huella)
 
     log(f"  {stats.summary()}")
     if stats.sin_refrescar:
@@ -131,10 +151,17 @@ def normalize_library(cfg: Config, log: Callable[[str], None],
 
 def _revisar(track: Any, ffmpeg: str, ffprobe: str, cfg: Config,
              minimo: float, maximo: float, a_cd: bool, con_perdida: bool,
-             log: Callable[[str], None], stats: LibraryStats) -> None:
+             log: Callable[[str], None], stats: LibraryStats,
+             hechas: dict[str, str] | None) -> None:
     fichero = _fichero_de(track)
     if fichero is None:
         stats.saltadas += 1
+        return
+
+    # Si ya se repaso y el fichero no ha cambiado desde entonces, no hay nada
+    # que mirar: medirla nuevamente cuesta lo mismo que la primera vez.
+    if hechas is not None and hechas.get(str(fichero)) == _marca(fichero):
+        stats.ya_hechas += 1
         return
 
     audio = leer_audio(ffprobe, fichero)
@@ -157,6 +184,7 @@ def _revisar(track: Any, ffmpeg: str, ffprobe: str, cfg: Config,
         and codec != "alac"
     if not fuera and not bajar and not a_alac:
         stats.ya_estaban += 1
+        _apuntar(hechas, fichero)
         return
 
     motivos = []
@@ -174,8 +202,9 @@ def _revisar(track: Any, ffmpeg: str, ffprobe: str, cfg: Config,
         stats.a_alac += bool(a_alac)
         return
 
+    final = fichero
     if a_alac:
-        error = _convertir_a_alac(ffmpeg, fichero, track, medida, bajar, log)
+        error, final = _convertir_a_alac(ffmpeg, fichero, track, medida, bajar, log)
     else:
         error = _reescribir(ffmpeg, fichero, codec_args, medida, bajar)
     if error:
@@ -186,6 +215,7 @@ def _revisar(track: Any, ffmpeg: str, ffprobe: str, cfg: Config,
     stats.normalizadas += 1
     stats.bajadas += bool(bajar)
     stats.a_alac += bool(a_alac)
+    _apuntar(hechas, final)
 
     # iTunes se queda con lo que anoto el dia que la importo: si no se le dice
     # que relea el fichero, sigue ensenando los kbps y el tamano de antes.
@@ -212,7 +242,7 @@ def _fichero_de(track: Any) -> Path | None:
 
 def _convertir_a_alac(ffmpeg: str, fichero: Path, track: Any,
                       medida: dict[str, str] | None, bajar: bool,
-                      log: Callable[[str], None]) -> str:
+                      log: Callable[[str], None]) -> tuple[str, Path]:
     """Pasa la cancion a ALAC y le dice a iTunes donde esta ahora.
 
     Aqui cambia la extension, asi que no basta con sustituir el fichero: si no
@@ -223,13 +253,13 @@ def _convertir_a_alac(ffmpeg: str, fichero: Path, track: Any,
     nuevo = _nombre_libre(fichero.with_suffix(".m4a"))
     error = _convertir(ffmpeg, fichero, nuevo, ["-c:a", "alac"], medida, bajar)
     if error:
-        return error
+        return error, fichero
 
     try:
         track.Location = str(nuevo)
     except Exception as exc:  # noqa: BLE001 - iTunes puede no dejarse
         _borrar(nuevo)
-        return f"iTunes no ha aceptado la ruta nueva ({exc})"
+        return f"iTunes no ha aceptado la ruta nueva ({exc})", fichero
 
     # Ya apunta al nuevo: el viejo sobra. Si no se puede borrar tampoco pasa
     # nada grave, solo ocupa; se avisa y se sigue.
@@ -237,7 +267,36 @@ def _convertir_a_alac(ffmpeg: str, fichero: Path, track: Any,
         fichero.unlink()
     except OSError as exc:
         log(f"      convertida, pero el {fichero.suffix} viejo sigue ahi: {exc}")
-    return ""
+    return "", nuevo
+
+
+def _marca(fichero: Path) -> str:
+    """Como esta el fichero ahora: si cambia, hay que volver a mirarlo."""
+    try:
+        info = fichero.stat()
+        return f"{int(info.st_mtime)}:{info.st_size}"
+    except OSError:
+        return ""
+
+
+def _apuntar(hechas: dict[str, str] | None, fichero: Path) -> None:
+    if hechas is not None:
+        hechas[str(fichero)] = _marca(fichero)
+
+
+def _huella(minimo: float, maximo: float, a_cd: bool, con_perdida: bool,
+            a_alac: bool) -> str:
+    """Con que criterios se repaso. Si cambian, lo apuntado ya no vale."""
+    return f"{minimo}|{maximo}|{a_cd}|{con_perdida}|{a_alac}"
+
+
+def _guardar(state: StateStore, hechas: dict[str, str], huella: str) -> None:
+    state.data["library_ok"] = hechas
+    state.data["library_huella"] = huella
+    try:
+        state.save()
+    except OSError:
+        pass    # perder el apunte solo cuesta tiempo la proxima vez
 
 
 def _nombre_libre(destino: Path) -> Path:

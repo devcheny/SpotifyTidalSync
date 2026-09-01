@@ -215,6 +215,26 @@ except ConvertError as exc:
 finally:
     os.environ.pop("SIN_ESPACIO", None)
 
+# --- 10. la segunda pasada no vuelve a medir lo ya repasado ---------------
+montar()
+lineas = []
+primera = normalize_library(config(), lineas.append)
+medidas_primera = len([l for l in lineas if l.strip().startswith("~")])
+lineas = []
+segunda = normalize_library(config(), lineas.append)
+print("10. primera pasada:", primera.revisadas, "revisadas |",
+      "segunda:", segunda.revisadas, "revisadas,", segunda.ya_hechas, "de antes")
+assert segunda.revisadas == 0, "no deberia volver a medir ninguna"
+assert segunda.ya_hechas >= 4, segunda.ya_hechas
+assert segunda.normalizadas == 0, segunda.normalizadas
+
+# Si cambian los ajustes, el apunte ya no vale y se repasa todo otra vez.
+lineas = []
+tercera = normalize_library(config(library_min_lufs=-12.0), lineas.append)
+print("    con otros ajustes ->", tercera.revisadas, "revisadas")
+assert tercera.revisadas > 0, "al cambiar el criterio hay que volver a mirar"
+assert any("ajustes han cambiado" in l for l in lineas), lineas
+
 shutil.rmtree(BANCO)
 print()
 print("NORMALIZAR BIBLIOTECA OK")

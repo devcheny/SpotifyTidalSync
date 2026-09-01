@@ -46,6 +46,7 @@ DEFAULTS: dict[str, Any] = {
     "library_max_lufs": -8.5,         # repasar toda la biblioteca
     "library_to_alac": True,          # pasar WAV y FLAC de la biblioteca a ALAC
     "library_include_lossy": False,   # tocar tambien MP3 y demas
+    "library_skip_done": True,        # no volver a medir lo ya repasado
     "flac_after_sync": False,         # convertir al terminar la sincronizacion
     "flac_schedule_time": "04:00",    # o repaso propio, una hora despues
 
