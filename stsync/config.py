@@ -50,6 +50,13 @@ DEFAULTS: dict[str, Any] = {
     "flac_after_sync": False,         # convertir al terminar la sincronizacion
     "flac_schedule_time": "04:00",    # o repaso propio, una hora despues
 
+    # --- Publicar en Spotify y TIDAL las listas de iTunes ---
+    "publish_to_spotify": False,      # replicar en Spotify
+    "publish_to_tidal": False,        # replicar en TIDAL (solo lo que tenga ISRC)
+    "publish_playlists": [],          # que playlists de iTunes se llevan
+    "publish_public": [],             # cuales de esas quedan publicas
+    "publish_prefix": "",             # prefijo del nombre en el servicio
+
     # --- Actualizaciones (para repartir la app entre conocidos) ---
     "github_repo": "devcheny/SpotifyTidalSync",   # de donde salen las versiones
     "update_check": True,           # mirar si hay version nueva al abrir

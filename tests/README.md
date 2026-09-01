@@ -15,6 +15,7 @@ equipo de desarrollo pelado.
 | `test_completar.py` | Completar los artistas que faltan en iTunes: que anada los que faltan, que no pise un artista distinto y que la simulacion no escriba. |
 | `test_publicar.py` | La secuencia de git al publicar una version, con git sustituido por un registrador: comprueba donde empuja sin empujar nada. |
 | `test_normalizar.py` | El repaso de toda la biblioteca: que arregle lo que hace falta, deje lo demas, y que si ffmpeg falla el original no se pierda. |
+| `test_publicar_listas.py` | Llevar las listas de iTunes a Spotify y TIDAL: que las cree, cuales quedan publicas, y que sin ISRC no se pueda enlazar en TIDAL. |
 | `test_borrar.py` | Que el borrado en una playlist de TIDAL mande el `meta` de cada entrada, sin el cual la API responde 400. |
 
 ## `test_tareas.py` va aparte
