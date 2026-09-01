@@ -338,8 +338,12 @@ Con *Modo simulación* te dice qué convertiría sin tocar nada.
 Botón **Repasar la biblioteca**, en esa misma pestaña. Es el trabajo que hacía
 `NormalizeLibrary.ps1`, pero **sin duplicar la biblioteca en otra carpeta** y
 midiendo antes de tocar: cada canción se analiza y solo se reescribe si su
-volumen se sale del margen (−9,5 a −8,5 LUFS) o si está grabada por encima de la
-calidad CD y esa casilla está marcada. Lo que ya está bien no se toca.
+volumen se sale del margen (−9,5 a −8,5 LUFS) o si está grabada por encima del
+techo de calidad. Lo que ya está bien no se toca.
+
+Para forzar que repase **todo otra vez**, incluso lo que ya hizo, marca *Repasar
+TODO otra vez* en ese mismo recuadro. Normalmente no hace falta: si cambias los
+ajustes, la huella cambia y se repasa entero solo.
 
 Se hace **una vez y se olvida**: lo que entre después ya sale normalizado del
 conversor. Con una biblioteca grande tarda un buen rato, porque mide canción por
@@ -387,8 +391,8 @@ está la casilla para **quitar la portada** en vez de convertirla.
 Desde esta versión el conversor y el repaso ya dejan la portada en JPEG por su
 cuenta, así que esto es solo para lo convertido antes.
 
-**Bajar a calidad CD.** El arreglo del crash de rekordbox, y merece la pena
-entender por qué. En un MP4 la frecuencia de muestreo va en la cabecera como un
+**Bajar la calidad de lo alto.** El arreglo del crash de rekordbox, y merece la
+pena entender por qué. En un MP4 la frecuencia de muestreo va en la cabecera como un
 número de 16.16 bits: **la parte entera son 16 bits, o sea hasta 65535 Hz**. Una
 canción de 192 kHz no cabe, así que ffmpeg deja ese campo **a cero** y apunta la
 frecuencia buena en la cookie del códec. iTunes y ffprobe leen la cookie y no ven
@@ -400,10 +404,30 @@ sobreviven — rekordbox se cierra al analizar la canción, sin mensaje.
 16 bits / 44,1 kHz ->  frecuencia en la cabecera: 44100 Hz  <- bien
 ```
 
-El botón recorre la biblioteca y reescribe a 16/44,1 lo que esté por encima. **No
-mide el volumen**, que es lo que tarda en el repaso completo: aquí solo cambia la
-frecuencia, así que va rápido, y de paso cada canción pasa a ocupar unas cinco
-veces menos. El volumen se queda exactamente como estuviera.
+El botón recorre la biblioteca y reescribe lo que pase del techo que tengas
+elegido. **No mide el volumen**, que es lo que tarda en el repaso completo: aquí
+solo cambia la calidad, así que va rápido. El volumen se queda exactamente como
+estuviera.
+
+### Hasta qué calidad se graba
+
+En la pestaña *Convertir a ALAC*, y vale para el conversor y para las dos pasadas
+de la biblioteca. Es un **techo, no un objetivo**: lo que ya venga por debajo se
+queda como está, porque subirlo no añadiría nada que no estuviera ya y solo
+ocuparía más.
+
+| Techo | Ocupa | Cuándo |
+|---|---|---|
+| **24 bits / 48 kHz** | 2304 kbps | Por defecto. El equilibrio, y lo más alto que un `.m4a` puede declarar en su cabecera. |
+| **16 bits / 44,1 kHz** | 1411 kbps | Calidad CD, lo que menos ocupa. |
+
+No hay una tercera opción de «no bajar nada», y es a propósito: por encima de 48
+kHz el fichero no puede declarar su frecuencia, y eso no es una preferencia sino
+un fichero roto. Aunque elijas el techo alto, un `.m4a` nunca se escribe por
+encima de 48 kHz.
+
+Si vienes de una versión anterior, la casilla de *calidad CD* se convierte sola:
+marcada pasa a «16/44,1», y desmarcada a «24/48».
 
 **Examinar un fichero.** Cuando un reproductor se cierra al abrir una canción y no
 dice por qué, la única vía es poner al lado una que sí funcione y ver en qué se

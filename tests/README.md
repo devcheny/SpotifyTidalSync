@@ -34,6 +34,10 @@ terminar), por eso no entra en el lanzador. Ejecútalo a mano cuando toques
 Antes de nada comprueba que no existan ya las tareas y se planta si las hay, para
 no pisar las tuyas.
 
+## Los dobles de iTunes
+
+`dobles.py` tiene el `Cancion`, el `Coleccion` y el `Biblioteca` que comparten varias pruebas: una colección COM de iTunes recorrida por índice desde 1, sin COM ni pywin32. Como las cuatro pasadas que recorren la biblioteca entera lo hacen por `itunes.recorrer_biblioteca`, basta con parchear `itunes.ITunesLibrary` para todas.
+
 ## Cómo están escritas
 
 Sin dependencias: son scripts que se lanzan solos y terminan con un `assert`. El

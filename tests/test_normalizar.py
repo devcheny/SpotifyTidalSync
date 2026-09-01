@@ -5,62 +5,15 @@ from pathlib import Path
 
 AQUI = Path(__file__).resolve().parent
 sys.path.insert(0, str(AQUI.parent))
+from stsync import itunes as itunes_mod
 from stsync import normalize as mod
 from stsync.config import Config
 from stsync.convert import ConvertError
 from stsync.normalize import normalize_library
+from dobles import Biblioteca as LibreriaFalsa, Cancion as Com
 
 BANCO = AQUI / "prueba-biblioteca"
 FFMPEG = str(AQUI / "ffmpeg-falso.bat")
-
-
-class Com:
-    """Una cancion de iTunes: solo lo que se le pide aqui."""
-
-    def __init__(self, ruta, kind=1, refresco_falla=False, location_falla=False):
-        object.__setattr__(self, "Location", str(ruta))
-        self.Kind = kind
-        self.refrescada = False
-        self.refresco_falla = refresco_falla
-        self.location_falla = location_falla
-
-    def __setattr__(self, campo, valor):
-        if campo == "Location" and getattr(self, "location_falla", False):
-            raise OSError("iTunes no acepta esa ruta")
-        object.__setattr__(self, campo, valor)
-
-    def UpdateInfoFromFile(self):
-        if self.refresco_falla:
-            raise OSError("iTunes esta ocupado")
-        self.refrescada = True
-
-
-class Coleccion:
-    def __init__(self, items):
-        self.items = items
-
-    @property
-    def Count(self):
-        return len(self.items)
-
-    def Item(self, i):
-        return self.items[i - 1]
-
-
-class LibreriaFalsa:
-    canciones: list = []
-
-    def __init__(self, log=None):
-        self.log = log or (lambda m: None)
-        self.app = type("App", (), {})()
-        self.app.LibraryPlaylist = type("PL", (), {})()
-        self.app.LibraryPlaylist.Tracks = Coleccion(LibreriaFalsa.canciones)
-
-    def connect(self):
-        self.log("  iTunes conectado (falso)")
-
-    def close(self):
-        pass
 
 
 def montar():
@@ -92,7 +45,8 @@ def config(**extra):
     return cfg
 
 
-mod.ITunesLibrary = LibreriaFalsa
+# El recorrido de la biblioteca vive en itunes.py: ahi se parchea.
+itunes_mod.ITunesLibrary = LibreriaFalsa
 
 # --- 1. repaso normal --------------------------------------------------------
 montar()
@@ -125,29 +79,29 @@ montar()
 LibreriaFalsa.canciones = [c for c in LibreriaFalsa.canciones
                           if "hires" in c.Location]
 lineas = []
-normalize_library(config(), lineas.append)
+normalize_library(config(quality_target="cd"), lineas.append)
 orden = (AQUI / "ultimo-comando.txt").read_text(encoding="utf-8").splitlines()
 print("2. ultima orden de ffmpeg:", " ".join(orden[-8:]))
 assert "-ar" in orden and orden[orden.index("-ar") + 1] == "44100", orden
 assert "measured_I" in orden[orden.index("-af") + 1], "usa la medicion"
 
-# --- 3. sin bajar la calidad, pero sin pasarse de lo que un .m4a admite -----
-# Desmarcar la calidad CD no da derecho a escribir un .m4a invalido: por
-# encima de 48 kHz la cabecera no puede declarar su frecuencia y se queda a
-# cero, que es lo que hace que otros programas se cierren al abrirlo.
+# --- 3. con el techo en 24/48, ni se pasa de ahi ni se toca lo de abajo -----
+# 48 kHz es lo mas alto que un .m4a puede declarar: por encima, la cabecera se
+# queda a cero y hay programas que se cierran al abrirlo. Los 24 bits si se
+# conservan, que es lo que hace de este techo un equilibrio.
 montar()
 LibreriaFalsa.canciones = [c for c in LibreriaFalsa.canciones
                            if "hires" in c.Location]
 lineas = []
-stats = normalize_library(config(flac_cd_quality=False), lineas.append)
+stats = normalize_library(config(quality_target="48k"), lineas.append)
 print("3. sin bajar calidad -> normalizadas:", stats.normalizadas,
       "| bajadas:", stats.bajadas)
 orden = (AQUI / "ultimo-comando.txt").read_text(encoding="utf-8").splitlines()
 assert stats.bajadas == 1, "la de 192 kHz hay que capearla igual"
 assert "-ar" in orden and orden[orden.index("-ar") + 1] == "48000", orden
 assert "-sample_fmt" not in orden, "los 24 bits si se respetan"
-assert any("no puede declarar" in l for l in lineas), "deberia decir por que"
-print("   la de 192 kHz baja a 48000 y conserva sus 24 bits")
+assert any("192000 -> 48000 Hz" in l for l in lineas), "deberia decir el cambio"
+print("   con el techo de 24/48 baja a 48000 y conserva sus 24 bits")
 
 # --- 4. tambien los formatos con perdida ------------------------------------
 montar()

@@ -119,20 +119,22 @@ from stsync.convert import args_calidad, comprobar_m4a
 m4a, flac = BANCO / "x.m4a", BANCO / "x.flac"
 
 # --- 9. con la casilla de calidad CD, todo lo alto baja a 44100 -------------
-args, motivo = args_calidad(192000, True, m4a)
+args, motivo = args_calidad(192000, 24, "cd", m4a)
 print("9.", args, "|", motivo)
 assert args == ["-ar", "44100", "-sample_fmt", "s16p"], args
-assert args_calidad(44100, True, m4a) == ([], ""), "ya esta a 44,1"
+assert args_calidad(44100, 16, "cd", m4a) == ([], ""), "ya esta a 44,1"
 
-# --- 10. sin ella, se capea igual: un .m4a a 192 kHz no es valido -----------
-args, motivo = args_calidad(192000, False, m4a)
+# --- 10. con el techo de 24/48 baja la frecuencia y respeta los bits --------
+args, motivo = args_calidad(192000, 24, "48k", m4a)
 print("10.", args, "|", motivo)
 assert args == ["-ar", "48000"], args
-assert "no puede declarar" in motivo, motivo
+assert "192000 -> 48000 Hz" in motivo, motivo
 assert "-sample_fmt" not in args, "los 24 bits se respetan si no pides CD"
-assert args_calidad(48000, False, m4a) == ([], ""), "48000 si cabe"
-assert args_calidad(96000, False, flac) == ([], ""), \
-    "un FLAC no tiene ese problema: ahi 96 kHz esta bien"
+assert args_calidad(48000, 24, "48k", m4a) == ([], ""), "48000 si cabe"
+assert args_calidad(96000, 24, "48k", flac)[0] == ["-ar", "48000"], \
+    "el techo vale para cualquier formato, no solo para los .m4a"
+assert args_calidad(44100, 16, "48k", m4a) == ([], ""), \
+    "por debajo del techo no se toca nada: subirla no anadiria nada"
 
 # --- 11. y si aun asi sale mal, se pilla antes de dar nada por bueno --------
 malo = BANCO / "cero.m4a"

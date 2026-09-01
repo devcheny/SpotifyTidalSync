@@ -6,59 +6,15 @@ from pathlib import Path
 AQUI = Path(__file__).resolve().parent
 sys.path.insert(0, str(AQUI.parent))
 from stsync import artwork as mod
-from stsync import normalize as norm
+from stsync import itunes as itunes_mod
 from stsync.artwork import check_artwork
 from stsync.config import Config
 from stsync.convert import args_caratula
 from stsync.normalize import downsample_library, refresh_info
+from dobles import Biblioteca as LibreriaFalsa, Cancion as Com
 
 BANCO = AQUI / "prueba-caratulas"
 FFMPEG = str(AQUI / "ffmpeg-falso.bat")
-
-
-class Com:
-    def __init__(self, ruta, kind=1, bitrate=1411, rate=44100,
-                 refresco_falla=False):
-        self.Location = str(ruta)
-        self.Kind = kind
-        self.BitRate = bitrate
-        self.SampleRate = rate
-        self.Name = Path(ruta).name
-        self.refrescada = False
-        self.refresco_falla = refresco_falla
-
-    def UpdateInfoFromFile(self):
-        if self.refresco_falla:
-            raise OSError("iTunes esta ocupado")
-        self.refrescada = True
-
-
-class Coleccion:
-    def __init__(self, items):
-        self.items = items
-
-    @property
-    def Count(self):
-        return len(self.items)
-
-    def Item(self, i):
-        return self.items[i - 1]
-
-
-class LibreriaFalsa:
-    canciones: list = []
-
-    def __init__(self, log=None):
-        self.log = log or (lambda m: None)
-        self.app = type("App", (), {})()
-        self.app.LibraryPlaylist = type("PL", (), {})()
-        self.app.LibraryPlaylist.Tracks = Coleccion(LibreriaFalsa.canciones)
-
-    def connect(self):
-        self.log("  iTunes conectado (falso)")
-
-    def close(self):
-        pass
 
 
 def montar():
@@ -89,8 +45,9 @@ def config(**extra):
     return cfg
 
 
-mod.ITunesLibrary = LibreriaFalsa
-norm.ITunesLibrary = LibreriaFalsa
+# Las cuatro pasadas recorren la biblioteca por el mismo sitio, asi que con
+# parchear ahi vale para todas.
+itunes_mod.ITunesLibrary = LibreriaFalsa
 
 # --- 1. que args_caratula decide, que es el nucleo del arreglo --------------
 assert args_caratula("") == ["-vn"], args_caratula("")
@@ -225,10 +182,21 @@ assert (BANCO / "hires-con-jpg.m4a").read_bytes() != b"original hires"
 assert (BANCO / "con-jpg.m4a").read_bytes() == b"original con-jpg.m4a", \
     "esa ya estaba a 44,1 y no habia que tocarla"
 orden = (AQUI / "ultimo-comando.txt").read_text(encoding="utf-8").splitlines()
-assert "-ar" in orden and orden[orden.index("-ar") + 1] == "44100", orden
-assert "-af" not in orden, "aqui no se normaliza: solo cambia la frecuencia"
+assert "-ar" in orden and orden[orden.index("-ar") + 1] == "48000", orden
+assert "-sample_fmt" not in orden, "el techo de 24/48 conserva los bits"
+assert "-af" not in orden, "aqui no se normaliza: solo cambia la calidad"
 assert LibreriaFalsa.canciones[0].refrescada, "iTunes tiene que releerla"
-print("9. baja solo la de 192 kHz, y sin tocar el volumen")
+print("9. baja solo la de 192 kHz al techo, y sin tocar el volumen")
+
+# El mismo trabajo con el otro techo llega hasta la calidad CD.
+montar()
+(BANCO / "hires-con-jpg.m4a").write_bytes(b"original hires")
+LibreriaFalsa.canciones = [Com(BANCO / "hires-con-jpg.m4a")]
+downsample_library(config(quality_target="cd"), lambda m: None)
+orden = (AQUI / "ultimo-comando.txt").read_text(encoding="utf-8").splitlines()
+assert orden[orden.index("-ar") + 1] == "44100", orden
+assert "-sample_fmt" in orden, "calidad CD si baja los bits"
+print("   y con el techo en calidad CD, a 44100 y 16 bits")
 
 # --- 10. en simulacion se cuentan y no se toca nada -------------------------
 montar()
@@ -265,7 +233,7 @@ print("12. lo que dice que hace:")
 for linea in texto.splitlines():
     if linea.startswith("  - "):
         print("   ", linea.strip())
-assert "bajar la frecuencia" in texto, texto
+assert "bajar la calidad" in texto, texto
 assert "portada de png a JPEG" in texto, texto
 assert "ANTES" in texto and "DESPUES" in texto, "falta el antes y el despues"
 assert mala.read_bytes() != b"original mala", "no la ha tocado"
