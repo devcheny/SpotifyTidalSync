@@ -18,8 +18,9 @@ from typing import Any, Callable
 
 from .config import Config
 from .convert import (CD_FORMAT, CD_RATE, NO_WINDOW, TIMEOUT_S, ConvertError,
-                      find_ffmpeg, leer_audio, loudnorm_con, medir_volumen,
-                      supera_calidad_cd, volumen_actual, _buscar_ffprobe)
+                      args_caratula, caratula_de, find_ffmpeg, leer_audio,
+                      loudnorm_con, medir_volumen, supera_calidad_cd,
+                      volumen_actual, _buscar_ffprobe)
 from .itunes import ITunesError, ITunesLibrary, _com_items
 from .store import StateStore
 
@@ -226,6 +227,80 @@ def _revisar(track: Any, ffmpeg: str, ffprobe: str, cfg: Config,
         log(f"      cambiada, pero iTunes no ha releido sus datos: {exc}")
 
 
+@dataclass
+class RefreshStats:
+    miradas: int = 0
+    refrescadas: int = 0
+    fallidas: list[tuple[str, str]] = field(default_factory=list)
+
+    def summary(self) -> str:
+        texto = (f"Datos releidos: {self.refrescadas} de {self.miradas} "
+                 f"candidatas")
+        if self.fallidas:
+            texto += f" | {len(self.fallidas)} que iTunes no ha querido releer"
+        return texto
+
+
+def refresh_info(cfg: Config, log: Callable[[str], None],
+                 should_stop: Callable[[], bool] | None = None) -> RefreshStats:
+    """Obliga a iTunes a releer de los ficheros los kbps y la frecuencia.
+
+    iTunes se queda con lo que anoto el dia que importo la cancion. Si el
+    fichero se ha bajado a calidad CD por fuera, la ventana sigue ensenando los
+    9216 kbps de un 24/192 aunque en disco ya sea un 16/44,1 de 1411.
+
+    Solo se tocan las que declaran mas de lo que cabe en un CD, que son las
+    unicas que pueden estar desfasadas. Una que de verdad siga en alta
+    resolucion volvera a decir lo mismo: releerla no le hace nada.
+    """
+    parar = should_stop or (lambda: False)
+    stats = RefreshStats()
+
+    log("")
+    log("== Releer los datos en iTunes ==")
+    if cfg.dry_run:
+        log("  (simulacion: solo se dice cuales harian falta)")
+
+    library = ITunesLibrary(log)
+    library.connect()
+    try:
+        canciones = list(_com_items(library.app.LibraryPlaylist.Tracks))
+        total = len(canciones)
+        log(f"  {total} canciones en la biblioteca")
+        for numero, track in enumerate(canciones, 1):
+            if parar():
+                log("  detenido por el usuario")
+                break
+            if numero % 500 == 0:
+                log(f"    {numero}/{total}...")
+            if _fichero_de(track) is None or not _parece_desfasada(track):
+                continue
+
+            stats.miradas += 1
+            if cfg.dry_run:
+                continue
+            try:
+                track.UpdateInfoFromFile()
+                stats.refrescadas += 1
+            except Exception as exc:  # noqa: BLE001 - iTunes ocupado, en uso...
+                stats.fallidas.append((str(getattr(track, "Name", "?")), str(exc)))
+    finally:
+        library.close()
+
+    log(f"  {stats.summary()}")
+    return stats
+
+
+def _parece_desfasada(track: Any) -> bool:
+    """Declara mas calidad de la que cabe en un CD: puede ser un dato viejo."""
+    try:
+        if int(track.BitRate or 0) > 1411:
+            return True
+        return int(track.SampleRate or 0) > CD_RATE
+    except Exception:  # noqa: BLE001 - la cancion no expone esos campos
+        return False
+
+
 def _fichero_de(track: Any) -> Path | None:
     """La ruta del fichero, si la cancion es un fichero local que existe."""
     try:
@@ -335,19 +410,24 @@ def _convertir(ffmpeg: str, entrada: Path, salida: Path, codec_args: list[str],
     "-map 0 -c:v copy" el contenedor de los .m4a se niega a cerrar el fichero
     ("Error closing file: Invalid argument") y no se salva ni una. Si aun asi
     la rechaza, se repite sin ella antes de darla por perdida.
+
+    La caratula tampoco se copia a ciegas: un PNG dentro de un .m4a esta
+    fuera de norma y hay programas que se cierran al abrirlo. Ver
+    convert.args_caratula.
     """
+    ffprobe = _buscar_ffprobe(ffmpeg)
+    arte = caratula_de(ffprobe, entrada) if ffprobe else "desconocida"
+
     detalle = "ffmpeg fallo"
     for con_caratula in (True, False):
         orden = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
                  "-i", str(entrada), "-map", "0:a:0"]
-        if con_caratula:
-            orden += ["-map", "0:v:0?", "-c:v", "copy",
-                      "-disposition:v", "attached_pic"]
-        else:
-            orden += ["-vn"]
+        orden += args_caratula(arte) if con_caratula else ["-vn"]
         orden += ["-af", loudnorm_con(medida)] + codec_args
         if bajar:
             orden += ["-ar", str(CD_RATE), "-sample_fmt", CD_FORMAT]
+        if salida.suffix.lower() in (".m4a", ".mp4"):
+            orden += ["-movflags", "+faststart"]
         orden += ["-map_metadata", "0", str(salida)]
 
         try:
