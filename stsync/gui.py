@@ -962,6 +962,7 @@ class App(tk.Tk):
         ttk.Entry(grid, textvariable=self.country_var, width=6).grid(
             row=1, column=1, sticky="w", pady=(8, 0))
 
+        self._build_match_box()
         self._build_updates_box()
 
         save_row = ttk.Frame(self.tab_settings)
@@ -970,6 +971,38 @@ class App(tk.Tk):
                    command=self._save_settings).pack(side="left")
         self.save_status = ttk.Label(save_row, text="", style="TLabel")
         self.save_status.pack(side="left", padx=12)
+
+    # -- validar que es la misma grabacion ------------------------------------
+    def _build_match_box(self) -> None:
+        caja = ttk.Frame(self.tab_settings, style="Card.TFrame", padding=14)
+        caja.pack(fill="x", pady=(12, 0))
+        ttk.Label(caja, text="Que sea la misma cancion, no solo el mismo titulo",
+                  style="Head.TLabel").pack(anchor="w")
+        ttk.Label(caja, text="El audio no se puede comparar: de Spotify y TIDAL "
+                             "solo llegan datos, nunca el fichero. Lo que si se "
+                             "puede es exigir que coincida el ISRC (que identifica "
+                             "la grabacion exacta) o, cuando no lo hay, que dure "
+                             "mas o menos lo mismo. Asi no se cuela el directo, el "
+                             "radio edit ni la version de otro artista.",
+                  style="Muted.TLabel", wraplength=740,
+                  justify="left").pack(anchor="w", pady=(2, 10))
+
+        var = tk.BooleanVar(value=bool(self.cfg.get("match_check_duration", True)))
+        self.vars["match_check_duration"] = var
+        ttk.Checkbutton(caja, variable=var,
+                        text="Descartar lo que dure muy distinto").pack(anchor="w")
+
+        fila = ttk.Frame(caja, style="Card.TFrame")
+        fila.pack(anchor="w", pady=(8, 0))
+        ttk.Label(fila, text="Margen", style="Card.TLabel").pack(side="left",
+                                                                 padx=(0, 10))
+        self.tolerance_var = tk.StringVar(
+            value=str(self.cfg.get("match_duration_tolerance", 7)))
+        ttk.Spinbox(fila, textvariable=self.tolerance_var, from_=1, to=120,
+                    width=5).pack(side="left")
+        ttk.Label(fila, text="segundos. Lo descartado sale en el informe "
+                             "diciendo cuanto dura cada una.",
+                  style="Muted.TLabel").pack(side="left", padx=(8, 0))
 
     # -- actualizaciones ------------------------------------------------------
     def _build_updates_box(self) -> None:
@@ -1286,6 +1319,8 @@ class App(tk.Tk):
             value = var.get()
             self.cfg.set(key, value.strip() if isinstance(value, str) else value)
         self.cfg.set("country_code", self.country_var.get().strip().upper() or "ES")
+        self.cfg.set("match_duration_tolerance",
+                     int(self.tolerance_var.get().strip() or 7))
         # El prefijo se guarda tal cual: "TIDAL - " acaba en espacio a proposito.
         self.cfg.set("itunes_playlist_prefix", self.itunes_prefix_var.get())
         self.cfg.set("itunes_playlists", self._itunes_chosen())
@@ -1335,6 +1370,11 @@ class App(tk.Tk):
         if country and not (len(country) == 2 and country.isalpha()):
             return ("El pais debe ser un codigo ISO de 2 letras "
                     "(por ejemplo ES, MX o US).")
+
+        margen = self.tolerance_var.get().strip()
+        if not margen.isdigit() or not 1 <= int(margen) <= 120:
+            return ("El margen de duracion debe ser un numero de segundos "
+                    "entre 1 y 120.")
 
         if not _valid_time(self.time_var.get().strip() or "03:00"):
             return "La hora de la sincronizacion automatica debe tener el formato HH:MM."
