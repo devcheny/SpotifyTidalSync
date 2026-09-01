@@ -154,10 +154,18 @@ class App(tk.Tk):
                               "ninguna lo es.",
                   style="Muted.TLabel", wraplength=740,
                   justify="left").pack(anchor="w", pady=(2, 8))
+        tk.Label(intro, text="Cada lista puede ir en un sentido o en los dos: "
+                             "'llevar' la copia a Spotify, 'traer' mete en la "
+                             "lista de iTunes lo que hayas anadido en Spotify y "
+                             "ya tengas en la biblioteca. Marcando las dos, se "
+                             "mantiene igual en los dos sitios.",
+                 bg=CARD, fg=MUTED, wraplength=740,
+                 justify="left").pack(anchor="w", pady=(0, 8))
         tk.Label(intro, text="En TIDAL solo se pueden enlazar las canciones cuyo "
                              "ISRC venga en las etiquetas del fichero: su API no "
-                             "sabe buscar por titulo. En Spotify no hay ese "
-                             "problema.", bg=CARD, fg=MUTED, wraplength=740,
+                             "sabe buscar por titulo, y por eso tampoco se puede "
+                             "traer de TIDAL. En Spotify no hay ese problema.",
+                 bg=CARD, fg=MUTED, wraplength=740,
                  justify="left").pack(anchor="w")
 
         destinos = ttk.Frame(self.tab_publish, style="Card.TFrame", padding=14)
@@ -169,12 +177,20 @@ class App(tk.Tk):
             self.vars[clave] = var
             ttk.Checkbutton(destinos, text=texto, variable=var).pack(anchor="w",
                                                                     pady=1)
+        falta = tk.BooleanVar(value=bool(self.cfg.get("publish_missing_playlist",
+                                                      True)))
+        self.vars["publish_missing_playlist"] = falta
+        ttk.Checkbutton(destinos, variable=falta,
+                        text="Al traer, dejar en Spotify una lista "
+                             "'... - Faltantes en iTunes' con lo que no tengas "
+                             "(privada, y no se copia a TIDAL)").pack(
+            anchor="w", pady=(6, 1))
 
         picker = ttk.Frame(self.tab_publish, style="Card.TFrame", padding=14)
         picker.pack(fill="both", expand=True, pady=(12, 0))
         head = ttk.Frame(picker, style="Card.TFrame")
         head.pack(fill="x")
-        ttk.Label(head, text="Que listas, y cuales publicas",
+        ttk.Label(head, text="Que listas, en que sentido, y cuales publicas",
                   style="Card.TLabel").pack(side="left")
         self.pub_load_button = ttk.Button(head, text="Cargar de iTunes",
                                           command=self._load_itunes_lists)
@@ -183,6 +199,8 @@ class App(tk.Tk):
         cabecera = ttk.Frame(picker, style="Card.TFrame")
         cabecera.pack(fill="x", pady=(6, 2))
         ttk.Label(cabecera, text="llevar", style="Muted.TLabel",
+                  width=8).pack(side="left")
+        ttk.Label(cabecera, text="traer", style="Muted.TLabel",
                   width=8).pack(side="left")
         ttk.Label(cabecera, text="publica", style="Muted.TLabel",
                   width=9).pack(side="left")
@@ -200,10 +218,13 @@ class App(tk.Tk):
             scrollregion=self.pub_canvas.bbox("all")))
 
         self.pub_selection: dict[str, tk.BooleanVar] = {}
+        self.pub_import: dict[str, tk.BooleanVar] = {}
         self.pub_public: dict[str, tk.BooleanVar] = {}
         self.pub_hint = ttk.Label(picker, text="", style="Muted.TLabel")
         self.pub_hint.pack(anchor="w", pady=(6, 0))
-        guardadas = list(self.cfg.get("publish_playlists") or [])
+        guardadas = sorted(set(self.cfg.get("publish_playlists") or [])
+                           | set(self.cfg.get("publish_import") or []),
+                           key=str.casefold)
         self._set_publish_lists(guardadas)
 
         row = ttk.Frame(self.tab_publish)
@@ -219,28 +240,50 @@ class App(tk.Tk):
         ttk.Button(row, text="Guardar ajustes",
                    command=self._save_settings).pack(side="left", padx=(8, 0))
 
-    def _set_publish_lists(self, nombres: list[str]) -> None:
-        """Repinta la lista conservando lo que estuviera marcado."""
+    def _set_publish_lists(self, nombres: list) -> None:
+        """Repinta la lista conservando lo que estuviera marcado.
+
+        Acepta nombres sueltos (los que vienen de la configuracion) o pares
+        (nombre, se_puede_editar) recien leidos de iTunes: las inteligentes no
+        admiten canciones, asi que a esas se les apaga la casilla de 'traer'.
+        """
         marcadas = {n for n, v in self.pub_selection.items() if v.get()} or \
             set(self.cfg.get("publish_playlists") or [])
+        traidas = {n for n, v in self.pub_import.items() if v.get()} or \
+            set(self.cfg.get("publish_import") or [])
         publicas = {n for n, v in self.pub_public.items() if v.get()} or \
             set(self.cfg.get("publish_public") or [])
         for hijo in self.pub_items.winfo_children():
             hijo.destroy()
 
-        self.pub_selection, self.pub_public = {}, {}
-        for nombre in sorted(set(nombres), key=str.casefold):
+        editables = {}
+        for entrada in nombres:
+            if isinstance(entrada, (tuple, list)):
+                editables[str(entrada[0])] = bool(entrada[1])
+            else:
+                editables.setdefault(str(entrada), True)
+
+        self.pub_selection, self.pub_import, self.pub_public = {}, {}, {}
+        for nombre in sorted(editables, key=str.casefold):
+            editable = editables[nombre]
             fila = ttk.Frame(self.pub_items, style="Card.TFrame")
             fila.pack(anchor="w", fill="x")
             llevar = tk.BooleanVar(value=nombre in marcadas)
+            traer = tk.BooleanVar(value=editable and nombre in traidas)
             publica = tk.BooleanVar(value=nombre in publicas)
             self.pub_selection[nombre] = llevar
+            self.pub_import[nombre] = traer
             self.pub_public[nombre] = publica
             ttk.Checkbutton(fila, variable=llevar, width=6).pack(side="left")
+            ttk.Checkbutton(fila, variable=traer, width=6,
+                            state="normal" if editable else "disabled").pack(
+                side="left")
             ttk.Checkbutton(fila, variable=publica, width=7).pack(side="left")
-            ttk.Label(fila, text=nombre, style="Card.TLabel").pack(side="left")
+            texto = nombre if editable else f"{nombre}   (inteligente)"
+            ttk.Label(fila, text=texto, style="Card.TLabel").pack(side="left")
         self.pub_hint.configure(
-            text=f"{len(nombres)} listas." if nombres
+            text=f"{len(editables)} listas. Las inteligentes solo se pueden "
+                 "llevar: iTunes no deja anadirles canciones." if editables
             else "Pulsa 'Cargar de iTunes' para elegir.")
 
     def _load_itunes_lists(self) -> None:
@@ -257,7 +300,8 @@ class App(tk.Tk):
             library = ITunesLibrary(self._q_log)
             library.connect()
             try:
-                nombres = [str(p.Name) for p in library.user_playlists()]
+                nombres = [(str(p.Name), library.is_writable(p))
+                           for p in library.user_playlists()]
             finally:
                 library.close()
             self.queue.put(("itunes_lists", nombres))
@@ -274,10 +318,17 @@ class App(tk.Tk):
         if not self._save_settings(silent=True):
             return
         elegidas = [n for n, v in self.pub_selection.items() if v.get()]
-        if not elegidas:
+        traidas = [n for n, v in self.pub_import.items() if v.get()]
+        if not elegidas and not traidas:
             messagebox.showwarning("Nada que publicar",
                                    "Marca al menos una lista en la columna "
-                                   "'llevar'.")
+                                   "'llevar' o en la de 'traer'.")
+            return
+        if traidas and not self.vars["publish_to_spotify"].get():
+            messagebox.showwarning(
+                "Falta Spotify",
+                "Solo se puede traer desde Spotify, asi que marca Spotify en "
+                "'Adonde' o quita las marcas de la columna 'traer'.")
             return
         publicas = [n for n in elegidas if self.pub_public[n].get()]
         if not simular and not self.cfg.dry_run and publicas and \
@@ -1240,6 +1291,8 @@ class App(tk.Tk):
         self.cfg.set("itunes_playlists", self._itunes_chosen())
         elegidas = [n for n, v in self.pub_selection.items() if v.get()]
         self.cfg.set("publish_playlists", elegidas)
+        self.cfg.set("publish_import",
+                     [n for n, v in self.pub_import.items() if v.get()])
         self.cfg.set("publish_public",
                      [n for n in elegidas if self.pub_public[n].get()])
         for code, label in _DIRECTIONS.items():
