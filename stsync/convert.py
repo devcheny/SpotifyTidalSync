@@ -53,6 +53,11 @@ ANIDAN = {b"moov", b"trak", b"mdia", b"minf", b"stbl", b"stsd"}
 # El indice de una cancion no llega a esto ni de lejos; el tope es por si
 # el fichero esta roto y dice medir un disparate.
 MAX_MOOV = 8 * 1024 * 1024
+# Contenedores con el problema del campo de 16.16 bits (ver args_calidad).
+CONTENEDOR_MP4 = (".m4a", ".mp4", ".m4b")
+# La frecuencia alta mas grande que cabe en ese campo. Por encima, el
+# fichero no puede declarar la suya.
+MAX_M4A_RATE = 48000
 
 # Lo que se convierte a ALAC: formatos sin perdida que iTunes o no lee, o lee
 # ocupando de mas. Los de con perdida (mp3, ogg, opus, wma) no entran: pasarlos
@@ -209,6 +214,16 @@ class FlacConverter:
             target.unlink(missing_ok=True)
             return
 
+        # ffmpeg puede terminar diciendo que todo ha ido bien y dejar un .m4a
+        # que iTunes acepta pero otros programas no. Se mira antes de dar la
+        # conversion por buena: asi el original no se borra por las buenas.
+        malo = comprobar_m4a(target)
+        if malo:
+            self.stats.failed.append((source.name, malo))
+            self.log(f"      ERROR: {malo}")
+            target.unlink(missing_ok=True)
+            return
+
         self.stats.converted += 1
         self.log(f"      -> {target.name}{_size_change(source, target)}")
         self._retire(source, folder)
@@ -229,10 +244,16 @@ class FlacConverter:
         for campo, valor in self._tags_que_faltan(ffmpeg, source).items():
             command += ["-metadata", f"{campo}={valor}"]
         command += ["-c:a", "alac"]
-        if self.cfg.get("flac_cd_quality", True):
-            # Un FLAC de 24 bits y 192 kHz sale a 9216 kbps y ocupa una
-            # barbaridad; a 16/44,1 son los 1411 kbps de un CD.
-            command += ["-ar", str(CD_RATE), "-sample_fmt", CD_FORMAT]
+        # Un FLAC de 24 bits y 192 kHz sale a 9216 kbps y ocupa una barbaridad;
+        # a 16/44,1 son los 1411 kbps de un CD. Y aunque no quieras bajarlo,
+        # por encima de 48 kHz un .m4a no puede ni declarar su frecuencia.
+        ffprobe = _buscar_ffprobe(ffmpeg)
+        rate = leer_audio(ffprobe, source).get("rate", 0) if ffprobe else 0
+        extra, motivo = args_calidad(rate, bool(self.cfg.get("flac_cd_quality",
+                                                             True)), target)
+        if motivo:
+            self.log(f"      {motivo}")
+        command += extra
         if self.cfg.get("flac_normalize", True):
             command += ["-af", loudnorm_con(medida)]
         command += ["-movflags", "+faststart", str(target)]
@@ -512,6 +533,64 @@ def _etiquetas(tags: dict[str, Any], sangria: str) -> list[str]:
     return fuera
 
 
+def args_calidad(rate: int, a_cd: bool, destino: Path) -> tuple[list[str], str]:
+    """A que frecuencia grabar, y por que. Lista vacia = dejarla como esta.
+
+    Hay dos motivos para bajarla, y el segundo no es opcional:
+
+    1. Lo pediste tu con la casilla de calidad CD.
+    2. **El fichero no seria valido**: un .m4a declara su frecuencia en un
+       campo de 16.16 bits, o sea hasta 65535 Hz. Por encima, ffmpeg lo deja a
+       cero y el fichero se vuelve veneno para todo el que se fie de la
+       cabecera. iTunes tira, pero rekordbox se cierra al analizarlo.
+
+    Por eso, aunque desmarques la calidad CD, a un .m4a no se escribe nunca por
+    encima de 48 kHz: es la frecuencia alta mas grande que cabe en ese campo.
+    """
+    if rate and a_cd and rate > CD_RATE:
+        return ["-ar", str(CD_RATE), "-sample_fmt", CD_FORMAT], "a calidad CD"
+    if rate > MAX_M4A_RATE and destino.suffix.lower() in CONTENEDOR_MP4:
+        return (["-ar", str(MAX_M4A_RATE)],
+                f"a {MAX_M4A_RATE} Hz a la fuerza: un .m4a no puede declarar "
+                f"los {rate} Hz de origen y el campo se quedaria a cero")
+    return [], ""
+
+
+def comprobar_m4a(salida: Path) -> str:
+    """Motivo por el que el .m4a recien escrito no vale, o "" si esta bien.
+
+    Se mira siempre antes de dar una conversion por buena: mas vale repetirla
+    que quedarse con un fichero que iTunes acepta y otros programas no.
+    """
+    if salida.suffix.lower() not in CONTENEDOR_MP4:
+        return ""
+    declarada = frecuencia_declarada(salida)
+    if declarada is None:
+        return ""           # no se ha podido mirar: no se acusa sin pruebas
+    if declarada == 0:
+        return ("ha salido con la frecuencia a cero en la cabecera, que es lo "
+                "que hace que otros programas se cierren al abrirlo")
+    return ""
+
+
+def frecuencia_declarada(source: Path) -> int | None:
+    """La frecuencia que dice la cabecera, o None si no se ha podido leer."""
+    try:
+        datos = _leer_moov(source)
+    except OSError:
+        return None
+    if datos is None:
+        return None
+    caja = _buscar_caja(datos, 0, len(datos), b"alac") \
+        or _buscar_caja(datos, 0, len(datos), b"mp4a")
+    if caja is None:
+        return None
+    cuerpo = datos[caja[0]:caja[1]]
+    if len(cuerpo) < 28:
+        return None
+    return int.from_bytes(cuerpo[24:28], "big") >> 16
+
+
 def _cabecera_audio(source: Path) -> list[str]:
     """La frecuencia que DECLARA la cabecera, que no siempre es la de verdad.
 
@@ -525,28 +604,14 @@ def _cabecera_audio(source: Path) -> list[str]:
     cero, y no todos lo sobreviven: rekordbox se cierra al analizar el fichero
     sin decir por que. A 44,1 kHz el campo cabe y no pasa nada.
     """
-    if source.suffix.lower() not in (".m4a", ".mp4", ".m4b"):
+    if source.suffix.lower() not in CONTENEDOR_MP4:
         return []
-    try:
-        datos = _leer_moov(source)
-    except OSError as exc:
-        return [f"  No se ha podido leer la cabecera: {exc}"]
-    if datos is None:
-        return ["  No se encuentra el indice (moov): el fichero no es un MP4 "
-                "valido o esta cortado."]
+    declarada = frecuencia_declarada(source)
+    if declarada is None:
+        return ["  No se ha podido leer la cabecera de audio: o no es un MP4 "
+                "valido, o esta cortado, o no lleva audio reconocible."]
 
-    caja = _buscar_caja(datos, 0, len(datos), b"alac") \
-        or _buscar_caja(datos, 0, len(datos), b"mp4a")
-    if caja is None:
-        return []
-    cuerpo = datos[caja[0]:caja[1]]
-    if len(cuerpo) < 28:
-        return []
-    version = int.from_bytes(cuerpo[8:10], "big")
-    declarada = int.from_bytes(cuerpo[24:28], "big") >> 16
-
-    fuera = [f"  Frecuencia declarada en la cabecera: {declarada} Hz "
-             f"(entrada de audio v{version})"]
+    fuera = [f"  Frecuencia declarada en la cabecera: {declarada} Hz"]
     if declarada == 0:
         fuera.append("  OJO: la cabecera dice 0 Hz. Ese campo solo llega a "
                      "65535, asi que una cancion de 192 kHz no cabe y se "
@@ -612,7 +677,7 @@ def _buscar_caja(datos: bytes, inicio: int, fin: int,
 
 def _estructura_mp4(source: Path) -> list[str]:
     """Los bloques de un .m4a: donde esta el indice y si el fichero llega entero."""
-    if source.suffix.lower() not in (".m4a", ".mp4", ".m4b"):
+    if source.suffix.lower() not in CONTENEDOR_MP4:
         return []
     bloques: list[tuple[str, int]] = []
     truncado = False
