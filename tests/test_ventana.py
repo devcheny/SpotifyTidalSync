@@ -11,7 +11,7 @@ from pathlib import Path
 
 AQUI = Path(__file__).resolve().parent
 sys.path.insert(0, str(AQUI.parent))
-from stsync.gui import App
+from stsync.gui import App, TextWindow
 
 app = App()
 app.wm_attributes("-alpha", 0.01)
@@ -88,26 +88,35 @@ try:
         # Sin iTunes esa pestana no se anade, asi que aqui no hay nada que
         # mirar. Esta parte solo corre en el equipo donde se usa la app.
         print("5. sin iTunes en este equipo: la pestana Publicar no esta")
-        print()
-        print("VENTANA OK (sin la parte de iTunes)")
-        raise SystemExit(0)
+    else:
+        publicar, _ = pestana(app.tab_publish)
+        app._set_publish_lists([f"Lista {i:02d}" for i in range(30)])
+        app.update()
+        publicar.yview_moveto(0.0)
+        app.pub_canvas.yview_moveto(0.0)
+        app.update()
+        dentro = app.pub_canvas.winfo_rooty() - publicar.winfo_rooty() + 20
+        app._on_wheel(type("Ev", (), {
+            "x_root": app.pub_canvas.winfo_rootx() + 20,
+            "y_root": publicar.winfo_rooty() + dentro,
+            "delta": -120, "widget": app.pub_canvas})())
+        app.update()
+        print("5. rueda sobre la lista -> lista:", app.pub_canvas.yview(),
+              "| pestana:", publicar.yview())
+        assert app.pub_canvas.yview()[0] > 0.0, "la lista no se ha movido"
+        assert publicar.yview()[0] == 0.0, "se ha movido la pestana en su lugar"
 
-    publicar, _ = pestana(app.tab_publish)
-    app._set_publish_lists([f"Lista {i:02d}" for i in range(30)])
+    # --- 6. el visor deja copiar el informe entero de una vez -------------
+    # Es como se pasa el resultado de "Examinar un fichero" a otro sitio.
+    informe = "\n".join(["ANTES", "=" * 20, "Stream 0  audio  alac", ""])
+    visor = TextWindow(app, Path("prueba.m4a"), contenido=informe)
     app.update()
-    publicar.yview_moveto(0.0)
-    app.pub_canvas.yview_moveto(0.0)
+    visor._copiar()
     app.update()
-    dentro = app.pub_canvas.winfo_rooty() - publicar.winfo_rooty() + 20
-    app._on_wheel(type("Ev", (), {
-        "x_root": app.pub_canvas.winfo_rootx() + 20,
-        "y_root": publicar.winfo_rooty() + dentro,
-        "delta": -120, "widget": app.pub_canvas})())
-    app.update()
-    print("5. rueda sobre la lista -> lista:", app.pub_canvas.yview(),
-          "| pestana:", publicar.yview())
-    assert app.pub_canvas.yview()[0] > 0.0, "la lista no se ha movido"
-    assert publicar.yview()[0] == 0.0, "se ha movido la pestana en su lugar"
+    print("6. copiado al portapapeles:", repr(app.clipboard_get()[:30]), "...")
+    assert app.clipboard_get() == informe, "no ha copiado el informe entero"
+    assert visor.aviso_copia.cget("text") == "Copiado."
+    visor.destroy()
 
     print()
     print("VENTANA OK")

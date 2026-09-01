@@ -470,6 +470,15 @@ de arriba se ve aquí), **si el fichero llega entero o está cortado** —eso se
 leyendo sus bloques, sin decodificar nada— y por último decodifica el audio de
 cabo a rabo para ver si da errores.
 
+El informe se abre en una ventana con **Copiar todo**, y además queda en el
+registro de la pestaña Sincronización.
+
+**Arreglar solo este.** El mismo botón, pero además de mirar, arregla: baja la
+calidad si pasa del techo y pasa la portada a JPEG si hace falta, sobre **esa
+canción y ninguna más**. Enseña el antes, lo que le ha hecho y el después. Es la
+forma de probar en un fichero antes de soltar una pasada contra la biblioteca
+entera; hazlo sobre una **copia** la primera vez.
+
 **Releer datos en iTunes.** Para cuando iTunes sigue diciendo *9216 kbps* de una
 canción que en disco ya está a 1411. No es un fallo de la conversión: iTunes se
 queda con lo que anotó el día que la importó, y el fichero solo se relee si se lo

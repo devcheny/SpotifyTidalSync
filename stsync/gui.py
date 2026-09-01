@@ -1964,10 +1964,24 @@ class TextWindow(tk.Toplevel):
         text.insert("1.0", aviso + raw)
         text.see("end")
         text.configure(state="disabled")
+        self.texto = aviso + raw
 
-        ttk.Button(self, text="Cerrar", command=self.destroy).pack(pady=(0, 12))
+        row = ttk.Frame(self)
+        row.pack(fill="x", padx=14, pady=(0, 12))
+        ttk.Button(row, text="Copiar todo", command=self._copiar).pack(side="left")
+        self.aviso_copia = ttk.Label(row, text="", style="TLabel")
+        self.aviso_copia.pack(side="left", padx=12)
+        ttk.Button(row, text="Cerrar", command=self.destroy).pack(side="right")
         self.transient(app)
+        self.bind("<Control-c>", lambda _e: self._copiar())
         self.bind("<Escape>", lambda _e: self.destroy())
+
+    def _copiar(self) -> None:
+        """Todo el texto al portapapeles, que es para lo que se suele abrir."""
+        self.clipboard_clear()
+        self.clipboard_append(self.texto)
+        self.aviso_copia.configure(text="Copiado.", foreground=SPOTIFY_GREEN)
+        self.after(2500, lambda: self.aviso_copia.configure(text=""))
 
 
 class ReportWindow(tk.Toplevel):
