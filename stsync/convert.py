@@ -317,8 +317,10 @@ class FlacConverter:
         if motivo:
             self.log(f"      {motivo}")
         command += extra
-        if self.cfg.get("flac_normalize", True):
-            command += ["-af", loudnorm_con(medida)]
+        cadena = filtro_audio(medida, _rate_de(extra),
+                              bool(self.cfg.get("flac_normalize", True)))
+        if cadena:
+            command += ["-af", cadena]
         command += ["-movflags", "+faststart", str(target)]
 
         try:
@@ -433,6 +435,30 @@ def medir_volumen(ffmpeg: str, source: Path,
     return medida
 
 
+def filtro_audio(medida: dict[str, str] | None, rate: int,
+                 normalizar: bool = True) -> str:
+    """La cadena de filtros del audio: normalizar y **reencuadrar**.
+
+    Lo segundo no es un adorno. Un filtro como loudnorm guarda audio por
+    delante para mirarlo antes de decidir, y al terminar lo suelta de golpe:
+    el multiplexor ve un salto en los tiempos y lo apunta como si ahi hubiera
+    un fotograma larguisimo. El fichero decodifica sin quejarse y dura lo que
+    tiene que durar, pero su tabla de tiempos declara fotogramas de 7666
+    muestras cuando el ALAC no puede pasar de 4096, y quien la recorra para
+    dibujar la onda se encuentra un hueco: rekordbox se cierra ahi.
+
+    `aresample` al final vuelve a partir el audio en fotogramas iguales y con
+    los tiempos seguidos. Se pone siempre que se recodifique, aunque no se
+    normalice: cuesta nada y quita toda una familia de sorpresas.
+    """
+    partes = []
+    if normalizar:
+        partes.append(loudnorm_con(medida))
+    if rate:
+        partes.append(f"aresample={rate}:async=1:first_pts=0")
+    return ",".join(partes)
+
+
 def loudnorm_con(medida: dict[str, str] | None) -> str:
     """El filtro de normalizacion, afinado con la medicion si la hay."""
     if not medida:
@@ -538,6 +564,9 @@ def informe_fichero(cfg: Config, source: Path) -> str:
 
     lineas += _estructura_mp4(source)
     lineas += _cabecera_audio(source)
+    saltos = fotogramas_imposibles(source)
+    if saltos:
+        lineas.append(f"  OJO: {saltos}")
 
     for stream in streams:
         lineas.append("")
@@ -766,6 +795,14 @@ def leer_libres(source: Path) -> dict[str, str]:
     return fuera
 
 
+def _rate_de(args: list[str]) -> int:
+    """La frecuencia que lleva una lista de argumentos de ffmpeg, o 0."""
+    try:
+        return int(args[args.index("-ar") + 1])
+    except (ValueError, IndexError):
+        return 0
+
+
 def formato_de(codec: str, bits: int) -> str:
     """Como llama cada codificador al formato de muestra que queremos.
 
@@ -811,6 +848,10 @@ def comprobar_salida(salida: Path, original: Path | None = None) -> str:
         return ("ha salido con la frecuencia a cero en la cabecera, que es lo "
                 "que hace que otros programas se cierren al abrirlo")
 
+    saltos = fotogramas_imposibles(salida)
+    if saltos:
+        return saltos
+
     if original is not None and original.suffix.lower() in CONTENEDOR_MP4:
         antes, ahora = duracion_mp4(original), duracion_mp4(salida)
         # Un margen de dos segundos cubre el redondeo de los fotogramas.
@@ -818,6 +859,63 @@ def comprobar_salida(salida: Path, original: Path | None = None) -> str:
             return (f"dura {ahora:.0f}s y el original {antes:.0f}s: algo se ha "
                     "quedado por el camino")
     return ""
+
+
+def fotogramas_imposibles(source: Path) -> str:
+    """Avisa si la tabla de tiempos declara fotogramas mas largos de lo posible.
+
+    Un ALAC dice en su cookie cuantas muestras mide un fotograma (4096, casi
+    siempre) y ninguno puede medir mas. Cuando la tabla `stts` declara uno de
+    7666, lo que hay ahi no es un fotograma gigante sino **un salto en la linea
+    de tiempo**: al fichero le falta un trozo de reloj.
+
+    ffmpeg lo decodifica sin quejarse, porque cada fotograma por separado esta
+    bien, y la duracion total sigue cuadrando. Pero un programa que recorra la
+    tabla para dibujar la onda se encuentra con un hueco donde no deberia
+    haberlo, y rekordbox se cierra al analizarla.
+
+    Sale de normalizar sin reencuadrar despues: el filtro suelta su buffer al
+    final y el multiplexor apunta el salto como si fuera un fotograma largo.
+    """
+    if source.suffix.lower() not in CONTENEDOR_MP4:
+        return ""
+    try:
+        datos = _leer_moov(source)
+    except OSError:
+        return ""
+    if datos is None:
+        return ""
+
+    caja = _buscar_caja(datos, 0, len(datos), b"alac")
+    if caja is None:
+        return ""           # solo se sabe el tope de un fotograma en ALAC
+    cuerpo = datos[caja[0]:caja[1]]
+    hueco = cuerpo[28:].find(b"alac")
+    if hueco < 0 or len(cuerpo) < 28 + hueco + 12:
+        return ""
+    tope = int.from_bytes(cuerpo[28 + hueco + 8:28 + hueco + 12], "big")
+    if not tope:
+        return ""
+
+    caja = _buscar_caja(datos, 0, len(datos), b"stts")
+    if caja is None:
+        return ""
+    tabla = datos[caja[0]:caja[1]]
+    cuantas = int.from_bytes(tabla[4:8], "big")
+    peores = []
+    for i in range(min(cuantas, 4096)):
+        trozo = tabla[8 + i * 8:16 + i * 8]
+        if len(trozo) < 8:
+            break
+        cuenta = int.from_bytes(trozo[:4], "big")
+        dura = int.from_bytes(trozo[4:], "big")
+        if dura > tope:
+            peores.append((cuenta, dura))
+    if not peores:
+        return ""
+    detalle = ", ".join(f"{c}x{d}" for c, d in peores[:3])
+    return (f"tiene saltos en la linea de tiempo: declara fotogramas de "
+            f"{detalle} muestras cuando el maximo del codec es {tope}")
 
 
 def duracion_mp4(source: Path) -> float:
