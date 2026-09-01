@@ -5,7 +5,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from stsync import itunes as mod
 from stsync.config import Config
-from stsync.itunes import LibraryIndex, _reglas, complete_tags
+from stsync.itunes import (LibraryIndex, _reglas, complete_artists_by_isrc,
+                           complete_tags)
 from stsync.model import Track
 
 
@@ -142,5 +143,94 @@ assert BIBLIOTECA[0].Year == 0, "sin dato en TIDAL, el año se queda vacio"
 assert stats.years == 0 and stats.artists == 1, (stats.years, stats.artists)
 print("4. sin año en TIDAL no se inventa nada")
 
+
+# ===========================================================================
+# Completar los artistas por ISRC
+# ===========================================================================
+# Un FLAC de tienda suele traer un solo artista aunque la cancion sea de
+# varios. El ISRC identifica esa grabacion exacta, asi que la lista que
+# devuelve el servicio es la del sello, no una adivinanza.
+import os
+import shutil
+from stsync import itunes as itunes_mod
+from stsync.model import Track
+
+BANCO = Path(__file__).resolve().parent / "prueba-isrc"
+if BANCO.exists():
+    shutil.rmtree(BANCO)
+BANCO.mkdir(parents=True)
+for nombre in ("sola.m4a", "acompanada.m4a", "sin-isrc.m4a"):
+    (BANCO / nombre).write_bytes(b"x")
+
+
+class ComISRC:
+    def __init__(self, nombre, artista):
+        self.Location = str(BANCO / nombre)
+        self.Kind = 1
+        self.Name = nombre
+        self.Artist = artista
+
+
+class ClienteISRC:
+    def __init__(self):
+        self.buscados = []
+
+    def find_by_isrc(self, isrc):
+        self.buscados.append(isrc)
+        return Track(service="spotify", id="x", title="La Fama",
+                     artist="ROSALIA", artists=("ROSALIA", "The Weeknd"))
+
+
+CANCIONES = [ComISRC("sola.m4a", "ROSALIA"),
+             ComISRC("acompanada.m4a", "ROSALIA; The Weeknd"),
+             ComISRC("sin-isrc.m4a", "Otro")]
+# Esta pasada recorre la biblioteca entera, no un indice: hace falta el doble
+# que imita la coleccion COM.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from dobles import Biblioteca
+
+Biblioteca.canciones = CANCIONES
+itunes_mod.ITunesLibrary = Biblioteca
+itunes_mod.find_ffmpeg = lambda configurado: "ffmpeg"
+itunes_mod._buscar_ffprobe = lambda ffmpeg: "ffprobe"
+itunes_mod._leer_tags = lambda ffprobe, ruta: (
+    {} if "sin-isrc" in str(ruta) else {"isrc": "ESA012345678"})
+
+# Lo ya buscado se recuerda entre ejecuciones: si no se limpia, la segunda
+# pasada no preguntaria nada y la prueba no probaria nada.
+from stsync.paths import state_file
+state_file().unlink(missing_ok=True)
+
+cliente = ClienteISRC()
+lineas = []
+stats = complete_artists_by_isrc(Config(dict(Config().data)), cliente,
+                                 lineas.append)
+print()
+print("\n".join(lineas))
+print()
+assert CANCIONES[0].Artist == "ROSALIA, The Weeknd", CANCIONES[0].Artist
+assert CANCIONES[1].Artist == "ROSALIA; The Weeknd", "esa ya tenia varios"
+assert CANCIONES[2].Artist == "Otro", "sin ISRC no se puede buscar"
+assert cliente.buscados == ["ESA012345678"], \
+    f"solo se busca la que puede ganar algo: {cliente.buscados}"
+assert stats.artists == 1, stats.artists
+print("5. completa la que iba sola y deja en paz a las demas")
+
+# --- 5b. lo ya preguntado no se vuelve a preguntar --------------------------
+CANCIONES[0].Artist = "ROSALIA"
+otro = ClienteISRC()
+complete_artists_by_isrc(Config(dict(Config().data)), otro, lambda m: None)
+print("5b. segunda pasada -> busquedas:", otro.buscados)
+assert otro.buscados == [], "deberia haberlo recordado"
+assert CANCIONES[0].Artist == "ROSALIA, The Weeknd", "y aun asi completarla"
+
+# --- 6. en simulacion no se toca iTunes ------------------------------------
+CANCIONES[0].Artist = "ROSALIA"
+complete_artists_by_isrc(Config(dict(Config().data, dry_run=True)),
+                         ClienteISRC(), lambda m: None)
+assert CANCIONES[0].Artist == "ROSALIA", "la simulacion ha escrito"
+print("6. la simulacion no escribe")
+
+shutil.rmtree(BANCO, ignore_errors=True)
 print()
 print("COMPLETAR OK")

@@ -483,6 +483,35 @@ te sirve de nada.
 Al leer las etiquetas de un `.m4a` también se miran las libres, así que el ISRC
 recién escrito sirve de verdad para publicar en TIDAL, que era el motivo.
 
+### Los artistas que faltan
+
+Un FLAC de tienda suele traer **un solo artista** aunque la canción sea de
+varios, y así entra en iTunes. Se completa por dos vías, que se complementan:
+
+**Al convertir, desde el título.** Lo que va en `(feat. X)`, `ft. Y` o
+`[with Z]` se añade al artista. Es gratis, va en el mismo paso y no necesita
+red:
+
+| Artista | Título | Queda |
+|---|---|---|
+| `Lola Indigo` | `EL BACHATÓN (feat. Lucho RK)` | `Lola Indigo; Lucho RK` |
+| `Karol G` | `Provenza ft. Maria Becerra, Nicki Nicole` | `Karol G; Maria Becerra; Nicki Nicole` |
+| `ROSALÍA; The Weeknd` | `La Fama (feat. The Weeknd)` | *sin cambio*, ya estaba |
+| `Manolo` | `Canción (Remastered 2016)` | *sin cambio*, eso no es nadie |
+
+Solo suma: nunca quita ni sustituye, y no repite a quien ya estuviera escrito
+aunque sea de otra manera. El título se deja como está.
+
+**Después, por el ISRC.** Botón **Artistas por ISRC** en la pestaña iTunes.
+Recorre la biblioteca, y de las canciones que figuran a nombre de uno solo
+busca su ISRC en Spotify (o TIDAL) y les añade los demás intérpretes. Como el
+ISRC identifica **esa grabación exacta**, la lista es la del sello y no una
+adivinanza: por eso aquí no hace falta emparejar por texto ni desconfiar del
+resultado, al revés que en el resto de la aplicación.
+
+Solo mira las que pueden ganar algo —las que ya traen varios nombres se saltan—
+y recuerda lo buscado, así que una segunda pasada no vuelve a preguntar.
+
 ### Antes de machacar una canción
 
 Toda reescritura pasa por `comprobar_salida`, que mira el fichero nuevo **antes**

@@ -19,7 +19,7 @@ from .convert import (DONE_DIR, OBJETIVOS_NOMBRE, POR_DEFECTO, ConvertError,
                       FlacConverter, informe_fichero, tamano_legible)
 from .convert import diagnose as flac_diagnose
 from .http import ApiError
-from .itunes import ITunesError, complete_tags
+from .itunes import ITunesError, complete_artists_by_isrc, complete_tags
 from .itunes import ITunesLibrary
 from .artwork import check_artwork, fix_one_file
 from .normalize import (downsample_library, normalize_library,
@@ -571,6 +571,9 @@ class App(tk.Tk):
         self.fix_button = ttk.Button(row, text="Completar datos",
                                      command=self._start_fix_artists)
         self.fix_button.pack(side="left", padx=(8, 0))
+        self.isrc_button = ttk.Button(row, text="Artistas por ISRC",
+                                      command=self._start_isrc)
+        self.isrc_button.pack(side="left", padx=(8, 0))
         self.try_fix_button = ttk.Button(
             row, text="Probar", width=8,
             command=lambda: self._start_fix_artists(simular=True))
@@ -1580,6 +1583,46 @@ class App(tk.Tk):
             return
         self._lanzar(self._fix_worker, simular)
 
+    def _start_isrc(self) -> None:
+        """Completa los artistas de las que figuran a nombre de uno solo."""
+        if self.worker and self.worker.is_alive():
+            return
+        if not (self.tokens.has("spotify") or self.tokens.has("tidal")):
+            messagebox.showwarning(
+                "Falta una cuenta",
+                "Conecta Spotify (o TIDAL): de ahi sale la lista de "
+                "interpretes de cada grabacion.")
+            return
+        if not self._save_settings(silent=True):
+            return
+        if not self.cfg.dry_run and not messagebox.askyesno(
+                "Completar artistas por ISRC",
+                "Se recorre la biblioteca buscando las canciones que figuran "
+                "a nombre de un solo artista y, por su ISRC, se les anaden "
+                "los demas interpretes.\n\n"
+                "El ISRC identifica esa grabacion exacta, asi que la lista es "
+                "la del sello y no una adivinanza. Solo se anade: a un artista "
+                "ya escrito no se le toca.\n\n"
+                "Con una biblioteca grande tarda un rato.\n\n¿Seguimos?"):
+            return
+        self._lanzar(self._isrc_worker, False)
+
+    def _isrc_worker(self, simular: bool = False) -> None:
+        try:
+            cfg = self._config_para(simular)
+            cliente = (SpotifyClient(cfg, self.tokens, self._q_log)
+                       if self.tokens.has("spotify")
+                       else TidalClient(cfg, self.tokens, self._q_log))
+            stats = complete_artists_by_isrc(cfg, cliente, self._q_log,
+                                             self.stop_flag.is_set)
+            self.queue.put(("ok", stats.summary()))
+        except (ApiError, ITunesError, ConvertError, OAuthError) as exc:
+            self.queue.put(("error", str(exc)))
+        except Exception as exc:  # noqa: BLE001
+            self.queue.put(("error", f"Error inesperado: {exc}"))
+        finally:
+            self.queue.put(("done", None))
+
     def _fix_worker(self, simular: bool = False) -> None:
         try:
             cfg = self._config_para(simular)
@@ -1754,6 +1797,7 @@ class App(tk.Tk):
         self.itunes_button.configure(state="disabled" if busy else "normal")
         self.itunes_load_button.configure(state="disabled" if busy else "normal")
         self.fix_button.configure(state="disabled" if busy else "normal")
+        self.isrc_button.configure(state="disabled" if busy else "normal")
         self.flac_button.configure(state="disabled" if busy else "normal")
         self.library_button.configure(state="disabled" if busy else "normal")
         self.art_button.configure(state="disabled" if busy else "normal")
