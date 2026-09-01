@@ -63,6 +63,10 @@ DEFAULTS: dict[str, Any] = {
     "github_repo": "devcheny/SpotifyTidalSync",   # de donde salen las versiones
     "update_check": True,           # mirar si hay version nueva al abrir
 
+    # --- Validar que es la misma grabacion, no solo el mismo titulo ---
+    "match_check_duration": True,    # descartar lo que dure muy distinto
+    "match_duration_tolerance": 7,   # segundos de margen
+
     # --- Comportamiento ---
     "country_code": "ES",            # ISO 3166-1 alpha-2, para el catalogo de TIDAL
     "dry_run": False,                # simula: no escribe nada en las cuentas
