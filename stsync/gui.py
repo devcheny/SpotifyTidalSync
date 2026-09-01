@@ -960,7 +960,7 @@ class App(tk.Tk):
         self.inspect_button = ttk.Button(fila, text="Examinar un fichero...",
                                          command=self._start_inspect)
         self.inspect_button.pack(side="left", padx=(8, 0))
-        self.fixone_button = ttk.Button(fila, text="Arreglar solo este...",
+        self.fixone_button = ttk.Button(fila, text="Convertir/arreglar uno...",
                                         command=self._start_fix_one)
         self.fixone_button.pack(side="left", padx=(8, 0))
 
@@ -1065,12 +1065,15 @@ class App(tk.Tk):
         ruta = self._elegir_cancion("Elige la cancion que quieres arreglar")
         if ruta is None:
             return
-        aviso = ("Se va a reescribir esta cancion:\n\n" + ruta.name
-                 + "\n\nSe le baja la frecuencia si no cabe en la cabecera y "
-                   "se le pasa la portada a JPEG si hace falta. Al terminar "
-                   "veras como estaba y como ha quedado.\n\n¿Seguimos?")
+        aviso = ("Se va a trabajar sobre esta cancion, y solo sobre ella:\n\n"
+                 + ruta.name
+                 + "\n\nSi es un FLAC, un WAV o similar, se convierte a ALAC "
+                   "al lado y el original se queda donde esta. Si ya es un "
+                   ".m4a, se le baja la calidad si pasa del techo y se le pasa "
+                   "la portada a JPEG si hace falta.\n\nAl terminar veras como "
+                   "estaba y como ha quedado.\n\n¿Seguimos?")
         if not self.cfg.dry_run and \
-                not messagebox.askyesno("Arreglar solo este fichero", aviso):
+                not messagebox.askyesno("Convertir o arreglar un solo fichero", aviso):
             return
         self._set_busy(True)
         self.worker = threading.Thread(target=self._fix_one_worker,

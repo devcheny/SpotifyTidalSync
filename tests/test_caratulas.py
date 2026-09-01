@@ -241,6 +241,18 @@ assert "portada de png a JPEG" in texto, texto
 assert "ANTES" in texto and "DESPUES" in texto, "falta el antes y el despues"
 assert mala.read_bytes() != b"original mala", "no la ha tocado"
 
+# --- 12b. un FLAC no se "arregla": se convierte a ALAC ---------------------
+montar()
+flac = BANCO / "nueva-jpg.flac"
+flac.write_bytes(b"un flac de verdad")
+texto = fix_one_file(config(), flac, lambda m: None)
+print("12b.", [l.strip() for l in texto.splitlines() if l.startswith("  - ")])
+assert "convertir .flac a ALAC" in texto, texto
+assert "el original se queda donde esta" in texto, texto
+assert (BANCO / "nueva-jpg.m4a").is_file(), "no ha salido el ALAC"
+assert flac.read_bytes() == b"un flac de verdad", "ha tocado el original"
+assert "DESPUES  ->  nueva-jpg.m4a" in texto, texto
+
 # --- 13. una que ya esta bien: se dice y no se toca -------------------------
 buena = BANCO / "con-jpg.m4a"
 texto = fix_one_file(config(), buena, lambda m: None)

@@ -213,12 +213,19 @@ class FlacConverter:
         return out
 
     # -------------------------------------------------------------- convertir
-    def _convert_one(self, ffmpeg: str, source: Path, folder: Path) -> None:
+    def _convert_one(self, ffmpeg: str, source: Path, folder: Path,
+                     retirar: bool = True) -> Path | None:
+        """Convierte una cancion y devuelve el .m4a que ha salido, o None.
+
+        Con retirar=False el original se queda donde esta. Lo usa el arreglo de
+        un fichero suelto, que es para probar: ahi borrar o mover el original
+        seria una sorpresa desagradable.
+        """
         target = _free_name(folder, source.stem)
         if self.cfg.dry_run:
             self.log(f"      [simulacion] -> {target.name}")
             self.stats.converted += 1
-            return
+            return None
 
         keep_art = bool(self.cfg.get("flac_keep_artwork", True))
         medida = None
@@ -238,7 +245,7 @@ class FlacConverter:
             self.stats.failed.append((source.name, detail[-1] if detail else "error"))
             self.log(f"      ERROR: {detail[-1] if detail else 'ffmpeg fallo'}")
             target.unlink(missing_ok=True)
-            return
+            return None
 
         # ffmpeg puede terminar diciendo que todo ha ido bien y dejar un .m4a
         # que iTunes acepta pero otros programas no. Se mira antes de dar la
@@ -248,11 +255,13 @@ class FlacConverter:
             self.stats.failed.append((source.name, malo))
             self.log(f"      ERROR: {malo}")
             target.unlink(missing_ok=True)
-            return
+            return None
 
         self.stats.converted += 1
         self.log(f"      -> {target.name}{_size_change(source, target)}")
-        self._retire(source, folder)
+        if retirar:
+            self._retire(source, folder)
+        return target
 
     def _run_ffmpeg(self, ffmpeg: str, source: Path, target: Path,
                     keep_art: bool, medida: dict[str, str] | None = None

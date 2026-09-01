@@ -21,11 +21,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .config import Config
-from .convert import (ART_JPEG, CONTENEDOR_MP4, NO_WINDOW, POR_DEFECTO,
-                      TIMEOUT_S, ConvertError, args_calidad, args_caratula,
-                      caratula_de, comprobar_salida, find_ffmpeg,
-                      informe_fichero, leer_audio,
-                      _buscar_ffprobe)
+from .convert import (ART_JPEG, CONTENEDOR_MP4, CONVERTIBLES, NO_WINDOW,
+                      OBJETIVOS_NOMBRE, POR_DEFECTO, TIMEOUT_S, ConvertError,
+                      FlacConverter, args_calidad, args_caratula, caratula_de,
+                      comprobar_salida, find_ffmpeg, informe_fichero,
+                      leer_audio, _buscar_ffprobe)
 from .itunes import recorrer_biblioteca
 from .normalize import (SIN_PERDIDA, _borrar, _fichero_de, _reescribir,
                         _sustituir)
@@ -132,10 +132,15 @@ def fix_one_file(cfg: Config, fichero: Path,
                  log: Callable[[str], None]) -> str:
     """Arregla una sola cancion y devuelve el antes y el despues.
 
-    Sirve para probar sobre un fichero antes de soltar nada contra las 7000:
-    hace lo mismo que las dos pasadas de la biblioteca -bajar la frecuencia si
-    no cabe en la cabecera, y la portada si no es JPEG- pero solo con esta, y
-    enseña el informe de como estaba y de como ha quedado.
+    Sirve para probar sobre un fichero antes de soltar nada contra las 7000, y
+    hace lo que le tocaria a esa cancion segun lo que sea:
+
+    - un FLAC, WAV, APE... se **convierte** a ALAC, como si estuviera en la
+      carpeta de auto-anadir, pero sin llevarse el original por delante;
+    - un .m4a se **arregla**: se le baja la calidad si pasa del techo y se le
+      pasa la portada a JPEG si hace falta.
+
+    En los dos casos devuelve el informe de como estaba y de como ha quedado.
     """
     ffmpeg = find_ffmpeg(str(cfg.get("ffmpeg_path", "")))
     if not ffmpeg:
@@ -148,6 +153,12 @@ def fix_one_file(cfg: Config, fichero: Path,
 
     partes = ["ANTES", "=" * 60, informe_fichero(cfg, fichero), "",
               "=" * 60, "QUE SE LE HACE", "=" * 60]
+
+    # Un FLAC (o un WAV, o un APE) lo que necesita es convertirse, no que le
+    # toquen nada: se le hace lo mismo que si estuviera en la carpeta de
+    # auto-anadir, pero solo a el y sin llevarse el original por delante.
+    if fichero.suffix.lower() in CONVERTIBLES:
+        return _convertir_suelto(cfg, ffmpeg, fichero, partes, log)
 
     audio = leer_audio(ffprobe, fichero)
     codec_args = SIN_PERDIDA.get(str(audio.get("codec", "")))
@@ -189,6 +200,40 @@ def fix_one_file(cfg: Config, fichero: Path,
     if hecho:
         partes += ["", "=" * 60, "DESPUES", "=" * 60,
                    informe_fichero(cfg, fichero)]
+    texto = "\n".join(partes)
+    log(texto)
+    return texto
+
+
+def _convertir_suelto(cfg: Config, ffmpeg: str, fichero: Path,
+                      partes: list[str], log: Callable[[str], None]) -> str:
+    """Pasa a ALAC una sola cancion, sin tocar el original.
+
+    Es el conversor de siempre con un unico fichero de entrada, para poder ver
+    en que queda antes de soltarlo contra una carpeta llena.
+    """
+    partes.append(f"  - convertir {fichero.suffix} a ALAC, con el techo en "
+                  f"{OBJETIVOS_NOMBRE.get(str(cfg.get('quality_target', POR_DEFECTO)), '?')}")
+    if cfg.get("flac_normalize", True):
+        partes.append("  - y normalizar el volumen por el camino")
+    partes.append("  - el original se queda donde esta (aqui no se borra nada)")
+
+    if cfg.dry_run:
+        partes.append("  (simulacion: no se ha tocado nada)")
+        texto = "\n".join(partes)
+        log(texto)
+        return texto
+
+    conversor = FlacConverter(cfg, lambda _m: None)
+    nuevo = conversor._convert_one(ffmpeg, fichero, fichero.parent,
+                                   retirar=False)
+    if nuevo is None:
+        motivo = conversor.stats.failed[0][1] if conversor.stats.failed \
+            else "no se pudo convertir"
+        partes.append(f"    NO SE PUDO: {motivo}")
+    else:
+        partes += ["", "=" * 60, f"DESPUES  ->  {nuevo.name}", "=" * 60,
+                   informe_fichero(cfg, nuevo)]
     texto = "\n".join(partes)
     log(texto)
     return texto

@@ -473,11 +473,17 @@ cabo a rabo para ver si da errores.
 El informe se abre en una ventana con **Copiar todo**, y además queda en el
 registro de la pestaña Sincronización.
 
-**Arreglar solo este.** El mismo botón, pero además de mirar, arregla: baja la
-calidad si pasa del techo y pasa la portada a JPEG si hace falta, sobre **esa
-canción y ninguna más**. Enseña el antes, lo que le ha hecho y el después. Es la
-forma de probar en un fichero antes de soltar una pasada contra la biblioteca
-entera; hazlo sobre una **copia** la primera vez.
+**Convertir/arreglar uno.** El mismo botón, pero además de mirar hace el
+trabajo, sobre **esa canción y ninguna más**. Qué hace depende de lo que le des:
+
+| Le das | Hace |
+|---|---|
+| Un FLAC, WAV, AIFF, APE, WavPack | Lo **convierte a ALAC** al lado, como si estuviera en la carpeta de auto-añadir: normaliza el volumen, completa las etiquetas y aplica el techo de calidad. **El original se queda donde está**, aquí no se borra nada. |
+| Un `.m4a` | Lo **arregla**: baja la calidad si pasa del techo y pasa la portada a JPEG si hace falta. |
+
+Enseña el antes, lo que le ha hecho y el después. Es la forma de probar en un
+fichero antes de soltar una pasada contra la biblioteca entera; con un `.m4a`,
+hazlo sobre una **copia** la primera vez, que ahí sí se reescribe en el sitio.
 
 **Releer datos en iTunes.** Para cuando iTunes sigue diciendo *9216 kbps* de una
 canción que en disco ya está a 1411. No es un fallo de la conversión: iTunes se
