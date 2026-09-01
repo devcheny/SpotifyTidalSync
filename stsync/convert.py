@@ -68,6 +68,13 @@ FORMATO_MUESTRA = {
     "flac": ("s16", "s32"),
 }
 
+# Etiquetas que las pone el contenedor, no la cancion: ni se copian ni se echan
+# de menos si no llegan al destino.
+ETIQUETAS_DEL_CONTENEDOR = {
+    "encoder", "major_brand", "minor_version", "compatible_brands",
+    "handler_name", "vendor_id", "language",
+}
+
 # Portadas que un .m4a admite tal cual. Lo demas (PNG, sobre todo) hay
 # que recodificarlo: ver args_caratula.
 ART_JPEG = {"mjpeg", "jpeg"}
@@ -268,6 +275,8 @@ class FlacConverter:
 
         self.stats.converted += 1
         self.log(f"      -> {target.name}{_size_change(source, target)}")
+        for linea in avisar_etiquetas(ffmpeg, source, target):
+            self.log(f"      {linea}")
         if retirar:
             self._retire(source, folder)
         return target
@@ -285,6 +294,11 @@ class FlacConverter:
                                      else "desconocida")
         else:
             command += ["-vn"]
+        # Primero las del original (que -map_metadata solo copia a medias) y
+        # encima las que haya que deducir del nombre del fichero.
+        ffprobe_tags = _buscar_ffprobe(ffmpeg)
+        command += args_metadatos(_leer_tags(ffprobe_tags, source)
+                                  if ffprobe_tags else {})
         for campo, valor in self._tags_que_faltan(ffmpeg, source).items():
             command += ["-metadata", f"{campo}={valor}"]
         command += ["-c:a", "alac"]
@@ -619,6 +633,59 @@ def args_calidad(rate: int, bits: int, objetivo: str, destino: Path,
     if not cambios:
         return args, ""
     return args, f"{', '.join(cambios)} ({OBJETIVOS_NOMBRE[objetivo]})"
+
+
+def args_metadatos(tags: dict[str, str]) -> list[str]:
+    """Vuelve a escribir a mano las etiquetas del original.
+
+    Con "-map_metadata 0" ffmpeg copia las que sabe traducir al contenedor de
+    destino y **tira el resto sin decir nada**. En un FLAC de una tienda eso se
+    lleva por delante el ISRC, el codigo de barras, el sello... y el ISRC no es
+    un adorno: es la unica llave con la que se puede emparejar una cancion en
+    TIDAL, porque su API no busca por texto.
+
+    Pasarlas otra vez en minusculas da dos oportunidades: las que ffmpeg tiene
+    en su tabla se colocan en su sitio, y del resto se encarga (o no) el
+    contenedor. Lo que aun asi se pierda lo dira etiquetas_perdidas, que para
+    eso esta.
+    """
+    fuera = []
+    for clave, valor in sorted(tags.items()):
+        if clave in ETIQUETAS_DEL_CONTENEDOR or not valor:
+            continue
+        fuera += ["-metadata", f"{clave}={valor}"]
+    return fuera
+
+
+def etiquetas_perdidas(antes: dict[str, str],
+                       despues: dict[str, str]) -> list[str]:
+    """Las etiquetas del original que no han llegado al fichero nuevo."""
+    llegadas = {k.lower() for k in despues}
+    return sorted(k for k in antes
+                  if k.lower() not in llegadas
+                  and k not in ETIQUETAS_DEL_CONTENEDOR)
+
+
+def avisar_etiquetas(ffmpeg: str, origen: Path, destino: Path) -> list[str]:
+    """Dice que etiquetas no han llegado al fichero nuevo, si es que falta alguna.
+
+    No se aborta por esto -la musica esta entera y es lo que importa-, pero
+    tampoco se calla: el ISRC es la unica llave para emparejar en TIDAL, y
+    enterarse un mes despues, con la biblioteca ya convertida, no vale de nada.
+    """
+    ffprobe = _buscar_ffprobe(ffmpeg)
+    if not ffprobe:
+        return []
+    faltan = etiquetas_perdidas(_leer_tags(ffprobe, origen),
+                                _leer_tags(ffprobe, destino))
+    if not faltan:
+        return []
+    aviso = [f"OJO: el {destino.suffix} no se ha quedado con estas etiquetas: "
+             + ", ".join(faltan)]
+    if "isrc" in faltan:
+        aviso.append("     el ISRC es el codigo con el que se empareja una "
+                     "cancion en TIDAL: sin el, esa no se puede publicar alli")
+    return aviso
 
 
 def formato_de(codec: str, bits: int) -> str:

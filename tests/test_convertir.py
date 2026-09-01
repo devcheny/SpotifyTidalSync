@@ -159,14 +159,18 @@ puestas = metadatos(args)
 print("  sin ninguna etiqueta   ->", puestas)
 assert puestas == {"artist": "Xiyo", "title": "Do You Remember"}, puestas
 
+# Las que ya trae se copian tal cual (para que no las tire el contenedor), y
+# no se las pisa con lo que diga el nombre del fichero.
 args = convertir_uno("Xiyo - Do You Remember.flac",
                      tags={"ARTIST": "Xiyo", "TITLE": "Do You Remember"})
-print("  con las suyas          ->", metadatos(args), "(no se toca lo que ya trae)")
-assert metadatos(args) == {}, metadatos(args)
+print("  con las suyas          ->", metadatos(args), "(copiadas del original)")
+assert metadatos(args) == {"artist": "Xiyo", "title": "Do You Remember"}, \
+    metadatos(args)
 
 args = convertir_uno("Xiyo - Do You Remember.flac", tags={"ARTIST": "Otro Nombre"})
 print("  solo le falta el titulo->", metadatos(args))
-assert metadatos(args) == {"title": "Do You Remember"}, metadatos(args)
+assert metadatos(args) == {"artist": "Otro Nombre",
+                           "title": "Do You Remember"}, metadatos(args)
 
 args = convertir_uno("03 - Xiyo - Do You Remember.flac")
 print("  con numero de pista    ->", metadatos(args))
@@ -208,6 +212,44 @@ args = convertir_uno("Xiyo - Do You Remember.flac", flac_normalize=False)
 print("  sin normalizar    :", "-af" not in args)
 assert "-af" not in args, args
 print()
+
+# --- las etiquetas del original se vuelven a escribir a mano -----------------
+# Con -map_metadata ffmpeg copia solo lo que sabe traducir a MP4 y tira el
+# resto. El ISRC es de los que tira, y es la unica llave para TIDAL.
+from stsync.convert import args_metadatos, etiquetas_perdidas
+
+DEL_FLAC = {"isrc": "ESUM72600399", "barcode": "0600574153173",
+            "title": "EL BACHATON", "publisher": "Universal", "encoder": "Lavf"}
+args = args_metadatos(DEL_FLAC)
+print()
+print("etiquetas que se pasan a mano:", " ".join(args[:6]), "...")
+assert "isrc=ESUM72600399" in args, args
+assert "barcode=0600574153173" in args, args
+assert not any(a.startswith("encoder=") for a in args), \
+    "el encoder lo pone el contenedor, no se copia"
+
+# Y lo que aun asi se pierda, se dice.
+perdidas = etiquetas_perdidas(DEL_FLAC, {"title": "EL BACHATON",
+                                         "encoder": "Lavf61"})
+print("se han perdido:", perdidas)
+assert perdidas == ["barcode", "isrc", "publisher"], perdidas
+assert etiquetas_perdidas(DEL_FLAC, DEL_FLAC) == [], "no falta ninguna"
+
+# De punta a punta: el aviso sale en el registro al convertir.
+montar()
+os.environ["TAGS_FALSOS"] = json.dumps(DEL_FLAC)
+os.environ["TAGS_SALIDA"] = json.dumps({"title": "EL BACHATON"})
+lineas = []
+try:
+    (RAIZ / "Lola - Bachaton.flac").write_bytes(b"flac")
+    FlacConverter(config(RAIZ), lineas.append).run()
+finally:
+    del os.environ["TAGS_FALSOS"], os.environ["TAGS_SALIDA"]
+aviso = [l for l in lineas if "OJO" in l or "ISRC" in l]
+print("aviso al convertir:", aviso)
+assert any("isrc" in l for l in aviso), lineas
+assert any("no se puede publicar alli" in l for l in aviso), lineas
+
 
 # --- sin ffprobe no se empieza siquiera --------------------------------------
 # Sin saber como esta grabado el original no se puede decidir si hay que

@@ -450,6 +450,27 @@ canciones: no venían de origen en alta resolución, **las subió el normalizado
 Si vienes de una versión anterior, la casilla de *calidad CD* se convierte sola:
 marcada pasa a «16/44,1», y desmarcada a «24/48».
 
+### Las etiquetas no se pierden en silencio
+
+`-map_metadata` copia al `.m4a` las etiquetas que ffmpeg sabe traducir a MP4 y
+**tira el resto sin decir nada**. En un FLAC de tienda eso se lleva por delante
+el ISRC, el código de barras, el sello… y el ISRC no es un adorno: es la única
+llave con la que se empareja una canción en TIDAL, porque su API no busca por
+texto.
+
+Así que se vuelven a escribir todas a mano, en minúsculas, además del
+`-map_metadata`. Y lo que **aun así** no llegue se dice en el registro:
+
+```
+OJO: el .m4a no se ha quedado con estas etiquetas: barcode, isrc, publisher
+     el ISRC es el codigo con el que se empareja una cancion en TIDAL:
+     sin el, esa no se puede publicar alli
+```
+
+No se aborta por esto —la música está entera, que es lo que importa— pero
+tampoco se calla: enterarte un mes después, con la biblioteca ya convertida, no
+te sirve de nada.
+
 ### Antes de machacar una canción
 
 Toda reescritura pasa por `comprobar_salida`, que mira el fichero nuevo **antes**

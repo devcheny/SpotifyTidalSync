@@ -6,7 +6,8 @@ Devuelve lo que se le pida, y se lo inventa a partir del nombre del fichero:
   y 192 kHz, y si no, calidad CD. El codec sale de la extension.
 - `-show_streams -select_streams v:0`: la portada, que es donde va. "png" o
   "jpg" en el nombre dan ese formato; sin ninguno de los dos, no lleva.
-- `-show_format`: las etiquetas que le diga TAGS_FALSOS.
+- `-show_format`: las etiquetas que le diga TAGS_FALSOS, o TAGS_SALIDA
+  si el fichero es un .m4a y esa variable esta puesta.
 
 Los dos primeros se pueden pedir a la vez, como hace el informe de un fichero.
 """
@@ -47,7 +48,11 @@ if "-show_streams" in sys.argv:
         }]
 
 if "-show_format" in sys.argv or "-show_streams" not in sys.argv:
-    etiquetas = json.loads(os.environ.get("TAGS_FALSOS") or "{}")
+    # TAGS_SALIDA, si esta, es lo que trae el .m4a ya convertido: asi se puede
+    # comprobar que se detectan las etiquetas que se han quedado por el camino.
+    cual = "TAGS_SALIDA" if (nombre.endswith(".m4a")
+                             and os.environ.get("TAGS_SALIDA")) else "TAGS_FALSOS"
+    etiquetas = json.loads(os.environ.get(cual) or "{}")
     salida["format"] = {
         "filename": fichero,
         "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
