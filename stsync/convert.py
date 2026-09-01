@@ -47,6 +47,13 @@ CD_FORMAT = "s16p"
 # que recodificarlo: ver args_caratula.
 ART_JPEG = {"mjpeg", "jpeg"}
 
+# Cajas de un MP4 que contienen otras. Hace falta para llegar hasta la
+# descripcion del audio, que vive en moov/trak/mdia/minf/stbl/stsd.
+ANIDAN = {b"moov", b"trak", b"mdia", b"minf", b"stbl", b"stsd"}
+# El indice de una cancion no llega a esto ni de lejos; el tope es por si
+# el fichero esta roto y dice medir un disparate.
+MAX_MOOV = 8 * 1024 * 1024
+
 # Lo que se convierte a ALAC: formatos sin perdida que iTunes o no lee, o lee
 # ocupando de mas. Los de con perdida (mp3, ogg, opus, wma) no entran: pasarlos
 # a ALAC no devuelve la calidad que ya perdieron y encima ocuparian el triple.
@@ -438,6 +445,7 @@ def informe_fichero(cfg: Config, source: Path) -> str:
                   f"Bitrate: {_entero(formato.get('bit_rate')) // 1000} kbps")
 
     lineas += _estructura_mp4(source)
+    lineas += _cabecera_audio(source)
 
     for stream in streams:
         lineas.append("")
@@ -451,6 +459,10 @@ def informe_fichero(cfg: Config, source: Path) -> str:
                           f"({stream.get('channel_layout', '?')}), "
                           f"{stream.get('sample_fmt', '?')}, "
                           f"{stream.get('bits_per_raw_sample') or '?'} bits")
+            if _entero(stream.get("sample_rate")) > 48000:
+                lineas.append(
+                    "    OJO: por encima de 48 kHz. Mira mas arriba lo que "
+                    "declara la cabecera: no siempre es esto.")
             inicio = _numero(stream.get("start_time"))
             if inicio:
                 lineas.append(f"    OJO: no empieza en cero, sino en {inicio}s "
@@ -498,6 +510,104 @@ def _etiquetas(tags: dict[str, Any], sangria: str) -> list[str]:
         else:
             fuera.append(f"{sangria}{clave:<16} = {texto}")
     return fuera
+
+
+def _cabecera_audio(source: Path) -> list[str]:
+    """La frecuencia que DECLARA la cabecera, que no siempre es la de verdad.
+
+    En un MP4 la frecuencia va en la tabla de descripcion como un numero de
+    16.16 bits: la parte entera son 16 bits, o sea hasta 65535 Hz. Un 192000
+    no cabe, asi que ffmpeg deja ese campo **a cero** y apunta la frecuencia
+    buena en la cookie del codec.
+
+    ffprobe lee la cookie y dice 192000 tan tranquilo, asi que por ahi no se
+    ve nada raro. Pero un programa que se fie de la cabecera se encuentra un
+    cero, y no todos lo sobreviven: rekordbox se cierra al analizar el fichero
+    sin decir por que. A 44,1 kHz el campo cabe y no pasa nada.
+    """
+    if source.suffix.lower() not in (".m4a", ".mp4", ".m4b"):
+        return []
+    try:
+        datos = _leer_moov(source)
+    except OSError as exc:
+        return [f"  No se ha podido leer la cabecera: {exc}"]
+    if datos is None:
+        return ["  No se encuentra el indice (moov): el fichero no es un MP4 "
+                "valido o esta cortado."]
+
+    caja = _buscar_caja(datos, 0, len(datos), b"alac") \
+        or _buscar_caja(datos, 0, len(datos), b"mp4a")
+    if caja is None:
+        return []
+    cuerpo = datos[caja[0]:caja[1]]
+    if len(cuerpo) < 28:
+        return []
+    version = int.from_bytes(cuerpo[8:10], "big")
+    declarada = int.from_bytes(cuerpo[24:28], "big") >> 16
+
+    fuera = [f"  Frecuencia declarada en la cabecera: {declarada} Hz "
+             f"(entrada de audio v{version})"]
+    if declarada == 0:
+        fuera.append("  OJO: la cabecera dice 0 Hz. Ese campo solo llega a "
+                     "65535, asi que una cancion de 192 kHz no cabe y se "
+                     "queda a cero. Hay programas que se cierran al leerlo "
+                     "(rekordbox, sin ir mas lejos, al analizarla). Se "
+                     "arregla bajandola a calidad CD.")
+    return fuera
+
+
+def _leer_moov(source: Path) -> bytes | None:
+    """El bloque moov, este al principio o al final del fichero."""
+    total = source.stat().st_size
+    with source.open("rb") as mano:
+        posicion = 0
+        while posicion < total:
+            mano.seek(posicion)
+            cabecera = mano.read(8)
+            if len(cabecera) < 8:
+                return None
+            tamano = int.from_bytes(cabecera[:4], "big")
+            tipo = cabecera[4:8]
+            cuerpo = posicion + 8
+            if tamano == 1:
+                tamano = int.from_bytes(mano.read(8), "big")
+                cuerpo = posicion + 16
+            elif tamano == 0:
+                tamano = total - posicion
+            if tamano < 8:
+                return None
+            if tipo == b"moov":
+                mano.seek(cuerpo)
+                return mano.read(min(tamano, MAX_MOOV))
+            posicion += tamano
+    return None
+
+
+def _buscar_caja(datos: bytes, inicio: int, fin: int,
+                 quiero: bytes) -> tuple[int, int] | None:
+    """(principio, final) del cuerpo de esa caja, buscando en las que anidan."""
+    posicion = inicio
+    while posicion + 8 <= fin:
+        tamano = int.from_bytes(datos[posicion:posicion + 4], "big")
+        tipo = datos[posicion + 4:posicion + 8]
+        cuerpo = posicion + 8
+        if tamano == 1:
+            tamano = int.from_bytes(datos[posicion + 8:posicion + 16], "big")
+            cuerpo = posicion + 16
+        elif tamano == 0:
+            tamano = fin - posicion
+        if tamano < 8:
+            return None
+        if tipo == quiero:
+            return cuerpo, posicion + tamano
+        if tipo in ANIDAN:
+            # La tabla de descripciones lleva delante un contador de 8 bytes.
+            salto = 8 if tipo == b"stsd" else 0
+            dentro = _buscar_caja(datos, cuerpo + salto, posicion + tamano, quiero)
+            if dentro:
+                return dentro
+        posicion += tamano
+    return None
 
 
 def _estructura_mp4(source: Path) -> list[str]:
