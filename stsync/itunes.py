@@ -167,6 +167,43 @@ class ITunesLibrary:
         return index
 
 
+def recorrer_biblioteca(log: Callable[[str], None],
+                        parar: Callable[[], bool],
+                        cada: Callable[[Any], None],
+                        paso: int = 250,
+                        avisar: Callable[[int, int], None] | None = None) -> int:
+    """Recorre la biblioteca de iTunes llamando a `cada(cancion)`.
+
+    Lo hacen igual las cuatro pasadas que la repasan entera (volumen, calidad,
+    caratulas y releer datos), asi que la conexion, el conteo, el aviso de
+    progreso cada tantas y el cierre pase lo que pase viven aqui.
+
+    Devuelve cuantas se han llegado a mirar, que no tiene por que ser el total
+    si se ha parado a medias.
+    """
+    library = ITunesLibrary(log)
+    library.connect()
+    vistas = 0
+    try:
+        canciones = list(_com_items(library.app.LibraryPlaylist.Tracks))
+        total = len(canciones)
+        log(f"  {total} canciones en la biblioteca")
+        for numero, track in enumerate(canciones, 1):
+            if parar():
+                log("  detenido por el usuario")
+                break
+            if numero % paso == 0:
+                if avisar is not None:
+                    avisar(numero, total)
+                else:
+                    log(f"    {numero}/{total}...")
+            vistas = numero
+            cada(track)
+    finally:
+        library.close()
+    return vistas
+
+
 def _com_items(collection: Any) -> Iterator[Any]:
     """Recorre una coleccion COM de iTunes (sus indices empiezan en 1)."""
     try:
