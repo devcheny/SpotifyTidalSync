@@ -303,6 +303,29 @@ else:
     assert todas.get("title") == "Bachaton", "no pisa las que si ve ffprobe"
 
 
+# --- iTunes no puede ver el .m4a hasta que este terminado --------------------
+# Esta carpeta la vigila iTunes: en cuanto ve un .m4a se lo lleva, y entonces
+# ni se le pueden escribir las etiquetas ni se puede comprobar como ha salido.
+# Por eso se trabaja sobre un nombre acabado en .tmp.
+from stsync.convert import es_mp4
+
+folder = montar()
+correr("nombre de trabajo", folder, config(folder))
+orden = (AQUI / "ultimo-comando.txt").read_text(encoding="utf-8").splitlines()
+destino = orden[-1]
+print()
+print("destino que recibe ffmpeg:", Path(destino).name)
+assert destino.endswith(".m4a.tmp"), destino
+assert "-f" in orden and orden[orden.index("-f") + 1] == "ipod", \
+    "con .tmp hay que decirle a ffmpeg que contenedor es"
+assert es_mp4(Path(destino)), "y para nosotros sigue siendo un MP4"
+# Y al terminar no queda ningun temporal: el fichero esta con su nombre.
+hay = contenido(folder)
+assert not [p for p in hay if p.endswith(".tmp")], hay
+assert "Otra cancion.m4a" in hay, hay
+print("  al terminar no queda ningun .tmp y el .m4a esta en su sitio")
+
+
 # --- sin ffprobe no se empieza siquiera --------------------------------------
 # Sin saber como esta grabado el original no se puede decidir si hay que
 # bajarlo, y un 24/192 saldria con la frecuencia a cero en la cabecera, que es

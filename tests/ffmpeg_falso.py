@@ -58,7 +58,12 @@ if os.environ.get("FALLA_CARATULA") and "attached_pic" in args:
 
 # Un ALAC de calidad CD ocupa bastante menos que el FLAC de 24/192 de origen.
 tamano = 400 if "44100" in args else 4000
-if str(salida).lower().endswith((".m4a", ".mp4", ".m4b")):
+# Mientras se trabaja, el destino se llama "cancion.m4a.tmp" para que iTunes
+# no se lo lleve: sigue siendo un .m4a y hay que escribirlo como tal.
+nombre_salida = str(salida).lower()
+if nombre_salida.endswith(".tmp"):
+    nombre_salida = nombre_salida[:-4]
+if nombre_salida.endswith((".m4a", ".mp4", ".m4b")):
     frecuencia = int(args[args.index("-ar") + 1]) if "-ar" in args else 44100
     datos = m4a_falso(frecuencia, con_audio=not os.environ.get("SIN_AUDIO"))
 else:

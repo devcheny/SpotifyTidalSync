@@ -450,6 +450,22 @@ canciones: no venían de origen en alta resolución, **las subió el normalizado
 Si vienes de una versión anterior, la casilla de *calidad CD* se convierte sola:
 marcada pasa a «16/44,1», y desmarcada a «24/48».
 
+### iTunes no ve la canción hasta que está terminada
+
+La carpeta de auto-añadir la vigila iTunes: **en cuanto ve aparecer un `.m4a` se
+lo lleva a la biblioteca**. Si se escribe ahí directamente, iTunes puede
+llevárselo a medio hacer, y para cuando se le van a poner las etiquetas o a
+comprobar cómo ha salido, el fichero ya no está o está bloqueado
+(`Permission denied`).
+
+Por eso se trabaja sobre `canción.m4a.tmp`: con esa extensión iTunes ni lo mira.
+Se convierte, se comprueba y se etiqueta, y solo entonces se le pone su nombre
+de verdad con un cambio de nombre, que es instantáneo. iTunes lo ve ya
+terminado.
+
+A ffmpeg hay que decirle entonces `-f ipod`, porque el `.tmp` ya no le dice qué
+contenedor es.
+
 ### Las etiquetas no se pierden en silencio
 
 `-map_metadata` copia al `.m4a` las etiquetas que ffmpeg sabe traducir a MP4 y

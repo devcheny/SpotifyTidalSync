@@ -96,6 +96,10 @@ CONTENEDOR_MP4 = (".m4a", ".mp4", ".m4b")
 # fichero no puede declarar la suya.
 MAX_M4A_RATE = 48000
 
+# Lo que se le pega al nombre mientras se trabaja, para que iTunes no lo
+# reconozca como musica y no se lo lleve a medio escribir.
+EN_OBRAS = ".tmp"
+
 # Lo que se convierte a ALAC: formatos sin perdida que iTunes o no lee, o lee
 # ocupando de mas. Los de con perdida (mp3, ogg, opus, wma) no entran: pasarlos
 # a ALAC no devuelve la calidad que ya perdieron y encima ocuparian el triple.
@@ -112,6 +116,27 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 class ConvertError(RuntimeError):
     """No se puede convertir: falta ffmpeg o la carpeta no sirve."""
+
+
+def es_mp4(ruta: Path) -> bool:
+    """Si el fichero es un contenedor MP4, aunque este a medio hacer.
+
+    Mientras se trabaja, un .m4a se llama "cancion.m4a.tmp" para que iTunes no
+    se lo lleve antes de tiempo. Sigue siendo un MP4 y hay que mirarlo como
+    tal, asi que la extension de trabajo no cuenta.
+    """
+    nombre = ruta.name.lower()
+    if nombre.endswith(EN_OBRAS):
+        nombre = nombre[:-len(EN_OBRAS)]
+    return nombre.endswith(CONTENEDOR_MP4)
+
+
+def _quitar(ruta: Path) -> None:
+    """Borra un fichero a medias sin montar un drama si esta bloqueado."""
+    try:
+        ruta.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 # --------------------------------------------------------------------------
@@ -247,39 +272,57 @@ class FlacConverter:
             self.stats.converted += 1
             return None
 
+        # Se trabaja sobre un nombre acabado en .tmp y solo al final se le pone
+        # el suyo. Es que esta carpeta la vigila iTunes: en cuanto ve aparecer
+        # un .m4a se lo lleva a la biblioteca, y entonces ni se le pueden
+        # escribir las etiquetas ni se puede comprobar como ha salido. Con otra
+        # extension no lo mira, y el cambio de nombre final es instantaneo, asi
+        # que iTunes solo ve el fichero cuando ya esta terminado.
+        temporal = target.with_name(target.name + ".tmp")
         keep_art = bool(self.cfg.get("flac_keep_artwork", True))
         medida = None
         if self.cfg.get("flac_normalize", True) and \
                 self.cfg.get("flac_two_pass", True):
             medida = medir_volumen(ffmpeg, source, self.log)
-        result = self._run_ffmpeg(ffmpeg, source, target, keep_art, medida)
+        result = self._run_ffmpeg(ffmpeg, source, temporal, keep_art, medida)
         if result.returncode != 0 and keep_art:
             # La causa mas comun de fallo es una caratula que no entra en el
             # .m4a, asi que antes de darlo por perdido se prueba sin ella.
             self.log("      fallo el primer intento, reintento sin la caratula")
-            target.unlink(missing_ok=True)
-            result = self._run_ffmpeg(ffmpeg, source, target, keep_art=False)
+            _quitar(temporal)
+            result = self._run_ffmpeg(ffmpeg, source, temporal, keep_art=False)
 
         if result.returncode != 0:
             detail = (result.stderr or "").strip().splitlines()
             self.stats.failed.append((source.name, detail[-1] if detail else "error"))
             self.log(f"      ERROR: {detail[-1] if detail else 'ffmpeg fallo'}")
-            target.unlink(missing_ok=True)
+            _quitar(temporal)
             return None
 
         # ffmpeg puede terminar diciendo que todo ha ido bien y dejar un .m4a
         # que iTunes acepta pero otros programas no. Se mira antes de dar la
         # conversion por buena: asi el original no se borra por las buenas.
-        malo = comprobar_salida(target, source)
+        malo = comprobar_salida(temporal, source)
         if malo:
             self.stats.failed.append((source.name, malo))
             self.log(f"      ERROR: {malo}")
-            target.unlink(missing_ok=True)
+            _quitar(temporal)
+            return None
+
+        avisos = completar_etiquetas(ffmpeg, source, temporal)
+
+        try:
+            os.replace(temporal, target)
+        except OSError as exc:
+            self.stats.failed.append((source.name, f"no se pudo dejar el .m4a "
+                                                   f"en su sitio: {exc}"))
+            self.log(f"      ERROR: no se pudo renombrar el temporal: {exc}")
+            _quitar(temporal)
             return None
 
         self.stats.converted += 1
         self.log(f"      -> {target.name}{_size_change(source, target)}")
-        for linea in completar_etiquetas(ffmpeg, source, target):
+        for linea in avisos:
             self.log(f"      {linea}")
         if retirar:
             self._retire(source, folder)
@@ -321,6 +364,8 @@ class FlacConverter:
                               bool(self.cfg.get("flac_normalize", True)))
         if cadena:
             command += ["-af", cadena]
+        if es_mp4(target):
+            command += ["-f", "ipod"]      # el .tmp no le dice que es un .m4a
         command += ["-movflags", "+faststart", str(target)]
 
         try:
@@ -652,7 +697,7 @@ def args_calidad(rate: int, bits: int, objetivo: str, destino: Path,
     como esta. Subirlo no anadiria nada que no estuviera ya y ocuparia mas.
     """
     techo_rate, techo_bits = OBJETIVOS.get(objetivo, OBJETIVOS[POR_DEFECTO])
-    if destino.suffix.lower() in CONTENEDOR_MP4:
+    if es_mp4(destino):
         # Un .m4a declara su frecuencia en un campo de 16.16 bits, o sea hasta
         # 65535 Hz. Por encima ffmpeg lo deja a cero, y eso no es una
         # preferencia: es un fichero que otros programas no saben abrir.
@@ -726,7 +771,7 @@ def completar_etiquetas(ffmpeg: str, origen: Path, destino: Path) -> list[str]:
         return []
 
     problema = ""
-    if destino.suffix.lower() in CONTENEDOR_MP4:
+    if es_mp4(destino):
         problema = escribir_libres(destino,
                                    {k: del_origen[k] for k in faltan})
         if not problema:
@@ -776,7 +821,7 @@ def escribir_libres(destino: Path, tags: dict[str, str]) -> str:
 
 def leer_libres(source: Path) -> dict[str, str]:
     """Las etiquetas que un .m4a guarda en atomos libres, en minusculas."""
-    if source.suffix.lower() not in CONTENEDOR_MP4:
+    if not es_mp4(source):
         return {}
     try:
         from mutagen.mp4 import MP4  # type: ignore[import-untyped]
@@ -830,12 +875,15 @@ def comprobar_salida(salida: Path, original: Path | None = None) -> str:
     3. Que dure mas o menos lo mismo que el original. Bajar la calidad cambia
        lo que ocupa, nunca lo que dura.
     """
-    if salida.suffix.lower() not in CONTENEDOR_MP4:
+    if not es_mp4(salida):
         return ""
     if not salida.is_file() or not salida.stat().st_size:
         return "no se ha llegado a escribir"
 
-    cajas = _leer_moov(salida)
+    try:
+        cajas = _leer_moov(salida)
+    except OSError as exc:
+        return f"no se ha podido volver a leer: {exc}"
     if cajas is None:
         return "no tiene indice (moov): no es un MP4 valido"
     if not (_buscar_caja(cajas, 0, len(cajas), b"alac")
@@ -852,7 +900,7 @@ def comprobar_salida(salida: Path, original: Path | None = None) -> str:
     if saltos:
         return saltos
 
-    if original is not None and original.suffix.lower() in CONTENEDOR_MP4:
+    if original is not None and es_mp4(original):
         antes, ahora = duracion_mp4(original), duracion_mp4(salida)
         # Un margen de dos segundos cubre el redondeo de los fotogramas.
         if antes and ahora and abs(antes - ahora) > max(2.0, antes * 0.02):
@@ -877,7 +925,7 @@ def fotogramas_imposibles(source: Path) -> str:
     Sale de normalizar sin reencuadrar despues: el filtro suelta su buffer al
     final y el multiplexor apunta el salto como si fuera un fotograma largo.
     """
-    if source.suffix.lower() not in CONTENEDOR_MP4:
+    if not es_mp4(source):
         return ""
     try:
         datos = _leer_moov(source)
@@ -974,7 +1022,7 @@ def _cabecera_audio(source: Path) -> list[str]:
     cero, y no todos lo sobreviven: rekordbox se cierra al analizar el fichero
     sin decir por que. A 44,1 kHz el campo cabe y no pasa nada.
     """
-    if source.suffix.lower() not in CONTENEDOR_MP4:
+    if not es_mp4(source):
         return []
     declarada = frecuencia_declarada(source)
     if declarada is None:
@@ -1047,7 +1095,7 @@ def _buscar_caja(datos: bytes, inicio: int, fin: int,
 
 def _estructura_mp4(source: Path) -> list[str]:
     """Los bloques de un .m4a: donde esta el indice y si el fichero llega entero."""
-    if source.suffix.lower() not in CONTENEDOR_MP4:
+    if not es_mp4(source):
         return []
     bloques: list[tuple[str, int]] = []
     truncado = False

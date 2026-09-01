@@ -21,12 +21,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .config import Config
-from .convert import (ART_JPEG, CONTENEDOR_MP4, CONVERTIBLES, NO_WINDOW,
-                      OBJETIVOS_NOMBRE, POR_DEFECTO, TIMEOUT_S, ConvertError,
-                      FlacConverter, args_calidad, args_caratula, caratula_de,
-                      comprobar_salida, completar_etiquetas, find_ffmpeg,
-                      informe_fichero,
-                      leer_audio, _buscar_ffprobe)
+from .convert import (ART_JPEG, CONVERTIBLES, NO_WINDOW, OBJETIVOS_NOMBRE,
+                      POR_DEFECTO, TIMEOUT_S, ConvertError, FlacConverter,
+                      args_calidad, args_caratula, caratula_de,
+                      comprobar_salida, completar_etiquetas, es_mp4,
+                      find_ffmpeg, informe_fichero, leer_audio,
+                      _buscar_ffprobe)
 from .itunes import recorrer_biblioteca
 from .normalize import (SIN_PERDIDA, _borrar, _fichero_de, _reescribir,
                         _sustituir)
@@ -95,7 +95,7 @@ def check_artwork(cfg: Config, log: Callable[[str], None],
 def _revisar(track: Any, ffmpeg: str, ffprobe: str, cfg: Config, quitar: bool,
              log: Callable[[str], None], stats: ArtStats) -> None:
     fichero = _fichero_de(track)
-    if fichero is None or fichero.suffix.lower() not in CONTENEDOR_MP4:
+    if fichero is None or not es_mp4(fichero):
         return
 
     stats.revisadas += 1
