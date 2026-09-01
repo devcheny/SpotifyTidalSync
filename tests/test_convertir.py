@@ -304,26 +304,27 @@ else:
 
 
 # --- iTunes no puede ver el .m4a hasta que este terminado --------------------
-# Esta carpeta la vigila iTunes: en cuanto ve un .m4a se lo lleva, y entonces
-# ni se le pueden escribir las etiquetas ni se puede comprobar como ha salido.
-# Por eso se trabaja sobre un nombre acabado en .tmp.
+# Esa carpeta la vigila iTunes y toca todo lo que aparece dentro: con el
+# fichero de trabajo ahi, ni se le pueden poner las etiquetas ni se puede
+# comprobar como salio. Se convierte fuera y solo se trae ya terminado.
 from stsync.convert import es_mp4
 
 folder = montar()
-correr("nombre de trabajo", folder, config(folder))
+correr("carpeta de trabajo", folder, config(folder))
 orden = (AQUI / "ultimo-comando.txt").read_text(encoding="utf-8").splitlines()
-destino = orden[-1]
+destino = Path(orden[-1])
 print()
-print("destino que recibe ffmpeg:", Path(destino).name)
-assert destino.endswith(".m4a.tmp"), destino
-assert "-f" in orden and orden[orden.index("-f") + 1] == "ipod", \
-    "con .tmp hay que decirle a ffmpeg que contenedor es"
-assert es_mp4(Path(destino)), "y para nosotros sigue siendo un MP4"
-# Y al terminar no queda ningun temporal: el fichero esta con su nombre.
+print("donde escribe ffmpeg:", destino.parent.name + "\\" + destino.name)
+assert folder.resolve() not in destino.resolve().parents, \
+    f"el trabajo NO puede estar donde mira iTunes: {destino}"
+assert destino.name.endswith(".m4a") and es_mp4(destino), destino
+assert "-f" in orden and orden[orden.index("-f") + 1] == "ipod", orden
+# En la carpeta vigilada solo aparece el fichero ya terminado.
 hay = contenido(folder)
 assert not [p for p in hay if p.endswith(".tmp")], hay
 assert "Otra cancion.m4a" in hay, hay
-print("  al terminar no queda ningun .tmp y el .m4a esta en su sitio")
+assert not destino.parent.exists(), "el taller se recoge al terminar"
+print("  se convierte fuera y solo llega el .m4a terminado")
 
 
 # --- sin ffprobe no se empieza siquiera --------------------------------------

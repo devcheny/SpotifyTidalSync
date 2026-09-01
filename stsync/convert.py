@@ -23,6 +23,8 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -96,9 +98,14 @@ CONTENEDOR_MP4 = (".m4a", ".mp4", ".m4b")
 # fichero no puede declarar la suya.
 MAX_M4A_RATE = 48000
 
-# Lo que se le pega al nombre mientras se trabaja, para que iTunes no lo
-# reconozca como musica y no se lo lleve a medio escribir.
+# Lo que se le pega al nombre mientras se copia, para que iTunes no lo
+# reconozca como musica y no se lo lleve a medias. La conversion en si se hace
+# en otra carpeta (ver FlacConverter._taller).
 EN_OBRAS = ".tmp"
+
+# Un fichero recien escrito puede estar ocupado un instante.
+INTENTOS_LECTURA = 5
+ESPERA_LECTURA = 0.3
 
 # Lo que se convierte a ALAC: formatos sin perdida que iTunes o no lee, o lee
 # ocupando de mas. Los de con perdida (mp3, ogg, opus, wma) no entran: pasarlos
@@ -119,16 +126,39 @@ class ConvertError(RuntimeError):
 
 
 def es_mp4(ruta: Path) -> bool:
-    """Si el fichero es un contenedor MP4, aunque este a medio hacer.
+    """Si el fichero es un contenedor MP4, aunque este a medio traer.
 
-    Mientras se trabaja, un .m4a se llama "cancion.m4a.tmp" para que iTunes no
-    se lo lleve antes de tiempo. Sigue siendo un MP4 y hay que mirarlo como
-    tal, asi que la extension de trabajo no cuenta.
+    Al copiar entre unidades, el destino se llama un rato "cancion.m4a.tmp"
+    para que iTunes no lo mire hasta que este entero. Sigue siendo un MP4.
     """
     nombre = ruta.name.lower()
     if nombre.endswith(EN_OBRAS):
         nombre = nombre[:-len(EN_OBRAS)]
     return nombre.endswith(CONTENEDOR_MP4)
+
+
+def _traer(origen: Path, destino: Path) -> str:
+    """Deja el fichero terminado en su sitio. "" si va bien.
+
+    En el mismo volumen es un cambio de nombre y es instantaneo, asi que iTunes
+    lo ve entero o no lo ve. Si el taller cayo en otra unidad hay que copiar, y
+    entonces se copia a un nombre que iTunes no mira y se renombra al final,
+    para que tampoco vea nunca una copia a medias.
+    """
+    try:
+        os.replace(origen, destino)
+        return ""
+    except OSError:
+        pass
+    puente = destino.with_name(destino.name + EN_OBRAS)
+    try:
+        shutil.copy2(origen, puente)
+        os.replace(puente, destino)
+    except OSError as exc:
+        _quitar(puente)
+        return str(exc)
+    _quitar(origen)
+    return ""
 
 
 def _quitar(ruta: Path) -> None:
@@ -201,6 +231,7 @@ class FlacConverter:
         self.log = log or (lambda msg: print(msg))
         self.should_stop = should_stop or (lambda: False)
         self.stats = ConvertStats()
+        self._obrador: Path | None = None
 
     # ---------------------------------------------------------------- publico
     def run(self) -> ConvertStats:
@@ -242,6 +273,7 @@ class FlacConverter:
             self._convert_one(ffmpeg, source, folder)
 
         self._clean_empty_dirs(folder)
+        self._recoger_taller()
         return self.stats
 
     # ----------------------------------------------------------------- buscar
@@ -272,13 +304,12 @@ class FlacConverter:
             self.stats.converted += 1
             return None
 
-        # Se trabaja sobre un nombre acabado en .tmp y solo al final se le pone
-        # el suyo. Es que esta carpeta la vigila iTunes: en cuanto ve aparecer
-        # un .m4a se lo lleva a la biblioteca, y entonces ni se le pueden
-        # escribir las etiquetas ni se puede comprobar como ha salido. Con otra
-        # extension no lo mira, y el cambio de nombre final es instantaneo, asi
-        # que iTunes solo ve el fichero cuando ya esta terminado.
-        temporal = target.with_name(target.name + ".tmp")
+        # Se trabaja FUERA de la carpeta de auto-anadir. Esa carpeta la vigila
+        # iTunes y todo lo que aparece ahi lo abre para mirarlo: con el fichero
+        # de trabajo dentro, ni se le pueden escribir las etiquetas ni se puede
+        # comprobar como ha salido. Cambiarle la extension no basta, iTunes lo
+        # toca igual. Solo se trae ya terminado.
+        temporal = self._taller() / target.name
         keep_art = bool(self.cfg.get("flac_keep_artwork", True))
         medida = None
         if self.cfg.get("flac_normalize", True) and \
@@ -311,12 +342,11 @@ class FlacConverter:
 
         avisos = completar_etiquetas(ffmpeg, source, temporal)
 
-        try:
-            os.replace(temporal, target)
-        except OSError as exc:
-            self.stats.failed.append((source.name, f"no se pudo dejar el .m4a "
-                                                   f"en su sitio: {exc}"))
-            self.log(f"      ERROR: no se pudo renombrar el temporal: {exc}")
+        fallo = _traer(temporal, target)
+        if fallo:
+            self.stats.failed.append(
+                (source.name, f"no se pudo dejar el .m4a en su sitio: {fallo}"))
+            self.log(f"      ERROR: {fallo}")
             _quitar(temporal)
             return None
 
@@ -327,6 +357,17 @@ class FlacConverter:
         if retirar:
             self._retire(source, folder)
         return target
+
+    def _taller(self) -> Path:
+        """Carpeta de trabajo, fuera de donde mira iTunes. Se crea una por pasada."""
+        if self._obrador is None:
+            self._obrador = Path(tempfile.mkdtemp(prefix="stsync-alac-"))
+        return self._obrador
+
+    def _recoger_taller(self) -> None:
+        if self._obrador is not None:
+            shutil.rmtree(self._obrador, ignore_errors=True)
+            self._obrador = None
 
     def _run_ffmpeg(self, ffmpeg: str, source: Path, target: Path,
                     keep_art: bool, medida: dict[str, str] | None = None
@@ -365,7 +406,9 @@ class FlacConverter:
         if cadena:
             command += ["-af", cadena]
         if es_mp4(target):
-            command += ["-f", "ipod"]      # el .tmp no le dice que es un .m4a
+            # Explicito, para no depender de que la extension del sitio donde
+            # se este trabajando le diga a ffmpeg que contenedor queremos.
+            command += ["-f", "ipod"]
         command += ["-movflags", "+faststart", str(target)]
 
         try:
@@ -880,10 +923,18 @@ def comprobar_salida(salida: Path, original: Path | None = None) -> str:
     if not salida.is_file() or not salida.stat().st_size:
         return "no se ha llegado a escribir"
 
-    try:
-        cajas = _leer_moov(salida)
-    except OSError as exc:
-        return f"no se ha podido volver a leer: {exc}"
+    cajas, fallo = None, ""
+    for intento in range(INTENTOS_LECTURA):
+        try:
+            cajas = _leer_moov(salida)
+            break
+        except OSError as exc:
+            # En Windows, un fichero recien escrito lo tiene abierto un
+            # instante el antivirus o el indexador: se espera y se reintenta.
+            fallo = str(exc)
+            time.sleep(ESPERA_LECTURA * (intento + 1))
+    else:
+        return f"no se ha podido volver a leer: {fallo}"
     if cajas is None:
         return "no tiene indice (moov): no es un MP4 valido"
     if not (_buscar_caja(cajas, 0, len(cajas), b"alac")

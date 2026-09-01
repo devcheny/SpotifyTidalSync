@@ -458,13 +458,15 @@ llevárselo a medio hacer, y para cuando se le van a poner las etiquetas o a
 comprobar cómo ha salido, el fichero ya no está o está bloqueado
 (`Permission denied`).
 
-Por eso se trabaja sobre `canción.m4a.tmp`: con esa extensión iTunes ni lo mira.
-Se convierte, se comprueba y se etiqueta, y solo entonces se le pone su nombre
-de verdad con un cambio de nombre, que es instantáneo. iTunes lo ve ya
-terminado.
+Cambiarle la extensión no basta —iTunes lo toca igual—, así que **la conversión
+se hace fuera de esa carpeta**, en una carpeta de trabajo temporal. Allí se
+convierte, se comprueba y se etiqueta, y solo el fichero terminado se trae a la
+carpeta de auto-añadir con un cambio de nombre, que es instantáneo: iTunes lo ve
+entero o no lo ve.
 
-A ffmpeg hay que decirle entonces `-f ipod`, porque el `.tmp` ya no le dice qué
-contenedor es.
+Si la carpeta de trabajo cae en otra unidad hay que copiar en vez de renombrar;
+entonces se copia primero a `canción.m4a.tmp`, que iTunes no mira, y se renombra
+al final.
 
 ### Las etiquetas no se pierden en silencio
 
