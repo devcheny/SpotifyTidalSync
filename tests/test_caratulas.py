@@ -91,7 +91,7 @@ assert (BANCO / "con-png.flac").read_bytes() == b"original con-png.flac", \
 # El audio se copia, que es lo que hace que esto sea rapido y sin perdida
 orden = (AQUI / "ultimo-comando.txt").read_text(encoding="utf-8").splitlines()
 assert "-c:a" in orden and orden[orden.index("-c:a") + 1] == "copy", orden
-assert "-af" not in orden, "aqui no se normaliza nada"
+assert "loudnorm" not in " ".join(orden), "aqui no se normaliza nada"
 assert "+faststart" in orden, orden
 # Y iTunes tiene que releerlas, que si no se queda con el tamano de antes
 arregladas = [c for c in canciones if "png.m4a" in c.Location]
@@ -188,7 +188,7 @@ orden = (AQUI / "ultimo-comando.txt").read_text(encoding="utf-8").splitlines()
 assert "-ar" in orden and orden[orden.index("-ar") + 1] == "48000", orden
 assert orden[orden.index("-sample_fmt") + 1] == "s32p", \
     "el techo de 24/48 conserva los bits (s32p = ALAC de 24)"
-assert "-af" not in orden, "aqui no se normaliza: solo cambia la calidad"
+assert "loudnorm" not in " ".join(orden), "aqui no se normaliza, solo la calidad"
 assert LibreriaFalsa.canciones[0].refrescada, "iTunes tiene que releerla"
 print("9. baja solo la de 192 kHz al techo, y sin tocar el volumen")
 

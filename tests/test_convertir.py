@@ -223,7 +223,7 @@ assert "linear=true" in filtro, filtro
 args = convertir_uno("Xiyo - Do You Remember.flac", flac_two_pass=False)
 filtro = args[args.index("-af") + 1]
 print("  a una pasada      :", filtro)
-assert filtro == "loudnorm=I=-9:TP=-1.5:LRA=11", filtro
+assert filtro.startswith("loudnorm=I=-9:TP=-1.5:LRA=11,"), filtro
 
 os.environ["MEDICION_ROTA"] = "1"
 try:
@@ -232,11 +232,19 @@ finally:
     os.environ.pop("MEDICION_ROTA", None)
 filtro = args[args.index("-af") + 1]
 print("  si la medida falla:", filtro, "(sigue convirtiendo)")
-assert filtro == "loudnorm=I=-9:TP=-1.5:LRA=11", filtro
+assert filtro.startswith("loudnorm=I=-9:TP=-1.5:LRA=11,"), filtro
+
+# El reencuadre va SIEMPRE detras del normalizador: sin el, el filtro suelta
+# su buffer al final y deja un salto en la linea de tiempo que rekordbox no
+# sobrevive. Ver filtro_audio.
+assert "aresample=44100" in filtro, filtro
+assert filtro.index("loudnorm") < filtro.index("aresample"), filtro
 
 args = convertir_uno("Xiyo - Do You Remember.flac", flac_normalize=False)
-print("  sin normalizar    :", "-af" not in args)
-assert "-af" not in args, args
+filtro = args[args.index("-af") + 1]
+print("  sin normalizar    :", filtro)
+assert "loudnorm" not in filtro, "no se pidio normalizar"
+assert filtro.startswith("aresample="), "pero reencuadrar si, siempre"
 print()
 
 # --- las etiquetas del original se vuelven a escribir a mano -----------------

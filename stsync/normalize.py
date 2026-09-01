@@ -19,10 +19,9 @@ from typing import Any, Callable
 from .config import Config
 from .convert import (CD_RATE, NO_WINDOW, OBJETIVOS_NOMBRE, POR_DEFECTO,
                       TIMEOUT_S, ConvertError, args_calidad, args_caratula,
-                      caratula_de, comprobar_salida, find_ffmpeg, leer_audio,
-                      loudnorm_con, medir_volumen, nombre_libre,
-                      volumen_actual,
-                      _buscar_ffprobe)
+                      caratula_de, comprobar_salida, filtro_audio, find_ffmpeg,
+                      leer_audio, medir_volumen, nombre_libre, volumen_actual,
+                      _buscar_ffprobe, _rate_de)
 from .itunes import ITunesError, recorrer_biblioteca
 from .store import StateStore
 
@@ -534,8 +533,9 @@ def _convertir(ffmpeg: str, entrada: Path, salida: Path, codec_args: list[str],
         orden = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
                  "-i", str(entrada), "-map", "0:a:0"]
         orden += args_caratula(arte) if con_caratula else ["-vn"]
-        if normalizar:
-            orden += ["-af", loudnorm_con(medida)]
+        cadena = filtro_audio(medida, _rate_de(frecuencia), normalizar)
+        if cadena:
+            orden += ["-af", cadena]
         orden += codec_args + frecuencia
         if salida.suffix.lower() in (".m4a", ".mp4"):
             orden += ["-movflags", "+faststart"]

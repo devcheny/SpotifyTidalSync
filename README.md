@@ -523,8 +523,19 @@ Se comprueban tres cosas, de la más grave a la menos:
 
 1. **Que siga habiendo audio.** Un `.m4a` con la portada y nada más pesa 60 KB y
    se abre sin dar ningún error.
-2. **Que la cabecera declare su frecuencia**, no un 0 (lo de arriba).
-3. **Que dure lo mismo.** Bajar la calidad cambia lo que ocupa, nunca lo que dura.
+2. **Que no haya saltos en la línea de tiempo.** Un ALAC declara en su cookie
+   cuánto mide un fotograma (4096 muestras) y ninguno puede medir más. Cuando la
+   tabla `stts` declara uno de 7666, ahí no hay un fotograma gigante: hay **un
+   hueco en el reloj**. ffmpeg lo decodifica sin quejarse y la duración total
+   cuadra, pero quien recorra la tabla para dibujar la onda se encuentra el
+   agujero — y rekordbox se cierra ahí.
+
+   Sale de normalizar sin reencuadrar después: el filtro guarda audio por
+   delante para decidir, al terminar lo suelta de golpe, y el multiplexor apunta
+   el salto como si fuera un fotograma larguísimo. Por eso `filtro_audio` pone
+   siempre un `aresample` detrás del `loudnorm`, aunque no se normalice.
+3. **Que la cabecera declare su frecuencia**, no un 0 (lo de arriba).
+4. **Que dure lo mismo.** Bajar la calidad cambia lo que ocupa, nunca lo que dura.
 
 Si algo de eso falla, el fichero nuevo se tira, el viejo se queda donde estaba y
 la canción aparece en la lista de errores.

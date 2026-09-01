@@ -197,6 +197,38 @@ print("13.", motivo)
 assert "dura 12s y el original 240s" in motivo, motivo
 assert comprobar_salida(largo, largo) == "", "la misma duracion tiene que pasar"
 
+
+# --- 14. saltos en la linea de tiempo --------------------------------------
+# Un ALAC dice en su cookie que un fotograma mide 4096 muestras. Si la tabla
+# de tiempos declara uno de 7666, ahi no hay un fotograma gigante: hay un
+# hueco en el reloj, y es lo que cerraba rekordbox al analizar la cancion.
+from stsync.convert import fotogramas_imposibles
+
+
+def con_tabla(nombre, pares, marco=4096):
+    ruta = BANCO / nombre
+    cookie = bloque("alac", bytes(4) + marco.to_bytes(4, "big")
+                    + bytes(1) + bytes([16]) + bytes(4) + bytes(2)
+                    + bytes(4) + bytes(4) + (44100).to_bytes(4, "big"))
+    entrada = bloque("alac", bytes(24) + b"\xac\x44\x00\x00" + cookie)
+    stts = b"".join(c.to_bytes(4, "big") + d.to_bytes(4, "big")
+                    for c, d in pares)
+    tabla = bloque("stts", bytes(4) + len(pares).to_bytes(4, "big") + stts)
+    stbl = bloque("stbl", bloque("stsd", bytes(8) + entrada) + tabla)
+    trak = bloque("trak", bloque("mdia", bloque("minf", stbl)))
+    ruta.write_bytes(bloque("ftyp", b"M4A ") + bloque("moov", trak))
+    return ruta
+
+
+sana = con_tabla("sana.m4a", [(2774, 4096), (1, 2854)])
+rota = con_tabla("rota.m4a", [(1773, 4096), (1, 7666), (30, 4096), (1, 2816)])
+print("14. sana:", repr(fotogramas_imposibles(sana)))
+print("    rota:", fotogramas_imposibles(rota))
+assert fotogramas_imposibles(sana) == "", "un ultimo fotograma corto es normal"
+motivo = fotogramas_imposibles(rota)
+assert "7666" in motivo and "4096" in motivo, motivo
+assert comprobar_salida(rota) == motivo, "y no puede sustituir a nadie"
+
 shutil.rmtree(BANCO, ignore_errors=True)
 print()
 print("EXAMINAR OK")
