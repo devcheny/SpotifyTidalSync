@@ -22,9 +22,11 @@ from typing import Any, Callable
 
 from .config import Config
 from .convert import (ART_JPEG, NO_WINDOW, TIMEOUT_S, ConvertError,
-                      args_caratula, caratula_de, find_ffmpeg, _buscar_ffprobe)
+                      args_calidad, args_caratula, caratula_de, find_ffmpeg,
+                      informe_fichero, leer_audio, _buscar_ffprobe)
 from .itunes import ITunesLibrary, _com_items
-from .normalize import _borrar, _fichero_de, _sustituir
+from .normalize import (SIN_PERDIDA, _borrar, _fichero_de, _reescribir,
+                        _sustituir)
 
 # Solo el contenedor MP4 tiene este problema. Un FLAC o un MP3 con la portada
 # en PNG estan en su derecho.
@@ -138,6 +140,69 @@ def _revisar(track: Any, ffmpeg: str, ffprobe: str, cfg: Config, quitar: bool,
     except Exception as exc:  # noqa: BLE001 - iTunes ocupado, fichero en uso...
         stats.sin_refrescar += 1
         log(f"      arreglada, pero iTunes no ha releido sus datos: {exc}")
+
+
+def fix_one_file(cfg: Config, fichero: Path,
+                 log: Callable[[str], None]) -> str:
+    """Arregla una sola cancion y devuelve el antes y el despues.
+
+    Sirve para probar sobre un fichero antes de soltar nada contra las 7000:
+    hace lo mismo que las dos pasadas de la biblioteca -bajar la frecuencia si
+    no cabe en la cabecera, y la portada si no es JPEG- pero solo con esta, y
+    enseña el informe de como estaba y de como ha quedado.
+    """
+    ffmpeg = find_ffmpeg(str(cfg.get("ffmpeg_path", "")))
+    if not ffmpeg:
+        raise ConvertError("No se encuentra ffmpeg.")
+    ffprobe = _buscar_ffprobe(ffmpeg)
+    if not ffprobe:
+        raise ConvertError("No se encuentra ffprobe, que viene con ffmpeg.")
+    if not fichero.is_file():
+        raise ConvertError(f"No existe el fichero: {fichero}")
+
+    partes = ["ANTES", "=" * 60, informe_fichero(cfg, fichero), "",
+              "=" * 60, "QUE SE LE HACE", "=" * 60]
+
+    audio = leer_audio(ffprobe, fichero)
+    codec_args = SIN_PERDIDA.get(str(audio.get("codec", "")))
+    frecuencia, motivo = args_calidad(int(audio.get("rate", 0)), True, fichero)
+    arte = caratula_de(ffprobe, fichero)
+
+    hecho = False
+    if frecuencia and codec_args:
+        partes.append(f"  - bajar la frecuencia {motivo}")
+        if not cfg.dry_run:
+            error = _reescribir(ffmpeg, fichero, codec_args, None, frecuencia,
+                                normalizar=False)
+            if error:
+                partes.append(f"    NO SE PUDO: {error}")
+            else:
+                hecho = True
+    elif frecuencia:
+        partes.append("  - habria que bajar la frecuencia, pero su formato no "
+                      "se toca desde aqui")
+
+    if arte and arte not in ART_JPEG:
+        partes.append(f"  - pasar la portada de {arte} a JPEG")
+        if not cfg.dry_run:
+            error = _reparar(ffmpeg, fichero, arte,
+                             bool(cfg.get("artwork_remove", False)))
+            if error:
+                partes.append(f"    NO SE PUDO: {error}")
+            else:
+                hecho = True
+
+    if not frecuencia and (not arte or arte in ART_JPEG):
+        partes.append("  - nada: esta cancion ya esta bien")
+    elif cfg.dry_run:
+        partes.append("  (simulacion: no se ha tocado nada)")
+
+    if hecho:
+        partes += ["", "=" * 60, "DESPUES", "=" * 60,
+                   informe_fichero(cfg, fichero)]
+    texto = "\n".join(partes)
+    log(texto)
+    return texto
 
 
 def _reparar(ffmpeg: str, fichero: Path, arte: str, quitar: bool) -> str:
