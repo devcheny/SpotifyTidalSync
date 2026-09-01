@@ -21,17 +21,13 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .config import Config
-from .convert import (ART_JPEG, NO_WINDOW, TIMEOUT_S, ConvertError,
-                      args_calidad, args_caratula, caratula_de, find_ffmpeg,
-                      informe_fichero, leer_audio, _buscar_ffprobe)
-from .itunes import ITunesLibrary, _com_items
+from .convert import (ART_JPEG, CONTENEDOR_MP4, NO_WINDOW, POR_DEFECTO,
+                      TIMEOUT_S, ConvertError, args_calidad, args_caratula,
+                      caratula_de, find_ffmpeg, informe_fichero, leer_audio,
+                      _buscar_ffprobe)
+from .itunes import recorrer_biblioteca
 from .normalize import (SIN_PERDIDA, _borrar, _fichero_de, _reescribir,
                         _sustituir)
-
-# Solo el contenedor MP4 tiene este problema. Un FLAC o un MP3 con la portada
-# en PNG estan en su derecho.
-CONTENEDORES = (".m4a", ".mp4", ".m4b")
-
 
 @dataclass
 class ArtStats:
@@ -81,21 +77,10 @@ def check_artwork(cfg: Config, log: Callable[[str], None],
     elif quitar:
         log("  las portadas que no valgan se quitaran, no se convertiran")
 
-    library = ITunesLibrary(log)
-    library.connect()
-    try:
-        canciones = list(_com_items(library.app.LibraryPlaylist.Tracks))
-        total = len(canciones)
-        log(f"  {total} canciones en la biblioteca")
-        for numero, track in enumerate(canciones, 1):
-            if parar():
-                log("  detenido por el usuario")
-                break
-            if numero % 250 == 0:
-                log(f"    {numero}/{total}... ({stats.malas} fuera de norma)")
-            _revisar(track, ffmpeg, ffprobe, cfg, quitar, log, stats)
-    finally:
-        library.close()
+    recorrer_biblioteca(
+        log, parar,
+        lambda track: _revisar(track, ffmpeg, ffprobe, cfg, quitar, log, stats),
+        avisar=lambda n, t: log(f"    {n}/{t}... ({stats.malas} fuera de norma)"))
 
     log(f"  {stats.summary()}")
     if stats.formatos:
@@ -108,7 +93,7 @@ def check_artwork(cfg: Config, log: Callable[[str], None],
 def _revisar(track: Any, ffmpeg: str, ffprobe: str, cfg: Config, quitar: bool,
              log: Callable[[str], None], stats: ArtStats) -> None:
     fichero = _fichero_de(track)
-    if fichero is None or fichero.suffix.lower() not in CONTENEDORES:
+    if fichero is None or fichero.suffix.lower() not in CONTENEDOR_MP4:
         return
 
     stats.revisadas += 1
@@ -165,12 +150,15 @@ def fix_one_file(cfg: Config, fichero: Path,
 
     audio = leer_audio(ffprobe, fichero)
     codec_args = SIN_PERDIDA.get(str(audio.get("codec", "")))
-    frecuencia, motivo = args_calidad(int(audio.get("rate", 0)), True, fichero)
+    frecuencia, motivo = args_calidad(int(audio.get("rate", 0)),
+                                      int(audio.get("bits", 0)),
+                                      str(cfg.get("quality_target",
+                                                  POR_DEFECTO)), fichero)
     arte = caratula_de(ffprobe, fichero)
 
     hecho = False
     if frecuencia and codec_args:
-        partes.append(f"  - bajar la frecuencia {motivo}")
+        partes.append(f"  - bajar la calidad: {motivo}")
         if not cfg.dry_run:
             error = _reescribir(ffmpeg, fichero, codec_args, None, frecuencia,
                                 normalizar=False)

@@ -17,11 +17,13 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .config import Config
-from .convert import (CD_RATE, NO_WINDOW, TIMEOUT_S, ConvertError,
-                      args_calidad, args_caratula, caratula_de, comprobar_m4a,
-                      find_ffmpeg, leer_audio, loudnorm_con, medir_volumen,
-                      volumen_actual, _buscar_ffprobe)
-from .itunes import ITunesError, ITunesLibrary, _com_items
+from .convert import (CD_RATE, NO_WINDOW, OBJETIVOS_NOMBRE, POR_DEFECTO,
+                      TIMEOUT_S, ConvertError, args_calidad, args_caratula,
+                      caratula_de, comprobar_m4a, find_ffmpeg, leer_audio,
+                      loudnorm_con, medir_volumen, nombre_libre,
+                      volumen_actual,
+                      _buscar_ffprobe)
+from .itunes import ITunesError, recorrer_biblioteca
 from .store import StateStore
 
 # Como volver a guardar cada formato. Los de la izquierda no pierden calidad al
@@ -90,22 +92,22 @@ def normalize_library(cfg: Config, log: Callable[[str], None],
 
     minimo = float(cfg.get("library_min_lufs", -9.5))
     maximo = float(cfg.get("library_max_lufs", -8.5))
-    a_cd = bool(cfg.get("flac_cd_quality", True))
+    objetivo = str(cfg.get("quality_target", POR_DEFECTO))
     con_perdida = bool(cfg.get("library_include_lossy", False))
 
     log("")
     log("== Repaso de la biblioteca ==")
     if cfg.dry_run:
         log("  (simulacion: solo se mide, no se reescribe nada)")
-    log(f"  volumen objetivo entre {minimo} y {maximo} LUFS"
-        + (", y bajando lo que supere la calidad CD" if a_cd else ""))
+    log(f"  volumen objetivo entre {minimo} y {maximo} LUFS, y bajando lo que "
+        f"pase de {OBJETIVOS_NOMBRE.get(objetivo, objetivo)}")
     if not con_perdida:
         log("  los MP3 y demas formatos con perdida se dejan como estan")
 
     # Lo ya repasado se apunta, porque medir es lo que cuesta: sin esto, una
     # segunda pasada vuelve a decodificar la biblioteca entera para nada.
     state = StateStore()
-    huella = _huella(minimo, maximo, a_cd, con_perdida,
+    huella = _huella(minimo, maximo, objetivo, con_perdida,
                      bool(cfg.get("library_to_alac", True)))
     saltar = bool(cfg.get("library_skip_done", True))
     hechas: dict[str, str] = {}
@@ -116,30 +118,18 @@ def normalize_library(cfg: Config, log: Callable[[str], None],
     elif state.data.get("library_huella"):
         log("  los ajustes han cambiado, asi que se repasa todo otra vez")
 
-    library = ITunesLibrary(log)
-    library.connect()
+    def avisar(numero: int, total: int) -> None:
+        log(f"    {numero}/{total}... ({stats.normalizadas} arregladas)")
+        _guardar(state, hechas, huella)
+
+    def una(track: Any) -> None:
+        _revisar(track, ffmpeg, ffprobe, cfg, minimo, maximo, objetivo,
+                 con_perdida, log, stats, hechas if saltar else None)
+
     try:
-        canciones = list(_com_items(library.app.LibraryPlaylist.Tracks))
-        total = len(canciones)
-        log(f"  {total} canciones en la biblioteca")
-        for numero, track in enumerate(canciones, 1):
-            if parar():
-                log("  detenido por el usuario")
-                break
-            if numero % 100 == 0:
-                log(f"    {numero}/{total}... ({stats.normalizadas} arregladas)")
-                _guardar(state, hechas, huella)
-            try:
-                _revisar(track, ffmpeg, ffprobe, cfg, minimo, maximo, a_cd,
-                         con_perdida, log, stats, hechas if saltar else None)
-            except ConvertError:
-                raise           # sin disco: parar de verdad
-            except Exception as exc:  # noqa: BLE001
-                # Una cancion rara no puede llevarse por delante las que faltan.
-                log(f"      se ha saltado por un error inesperado: {exc}")
-                stats.fallidas.append((f"cancion {numero}", str(exc)))
+        recorrer_biblioteca(log, parar, _a_prueba_de_balas(una, log, stats),
+                            paso=100, avisar=avisar)
     finally:
-        library.close()
         # Tambien si se corta a medias: lo hecho hasta aqui no se repite.
         _guardar(state, hechas, huella)
 
@@ -150,8 +140,30 @@ def normalize_library(cfg: Config, log: Callable[[str], None],
     return stats
 
 
+def _a_prueba_de_balas(cada: Callable[[Any], None], log: Callable[[str], None],
+                       stats: Any) -> Callable[[Any], None]:
+    """Envuelve el trabajo de una cancion para que un fallo no pare el resto.
+
+    Con una excepcion: quedarse sin disco no se arregla insistiendo, y seguir
+    con las que faltan solo alarga la lista de fallos.
+    """
+    numero = [0]
+
+    def protegida(track: Any) -> None:
+        numero[0] += 1
+        try:
+            cada(track)
+        except ConvertError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            log(f"      se ha saltado por un error inesperado: {exc}")
+            stats.fallidas.append((f"cancion {numero[0]}", str(exc)))
+
+    return protegida
+
+
 def _revisar(track: Any, ffmpeg: str, ffprobe: str, cfg: Config,
-             minimo: float, maximo: float, a_cd: bool, con_perdida: bool,
+             minimo: float, maximo: float, objetivo: str, con_perdida: bool,
              log: Callable[[str], None], stats: LibraryStats,
              hechas: dict[str, str] | None) -> None:
     fichero = _fichero_de(track)
@@ -181,8 +193,9 @@ def _revisar(track: Any, ffmpeg: str, ffprobe: str, cfg: Config,
     # El destino sera .m4a si va a pasar a ALAC, y si no el mismo fichero.
     a_m4a = codec != "alac" and bool(cfg.get("library_to_alac", True))
     destino = fichero.with_suffix(".m4a") if a_m4a else fichero
-    frecuencia, motivo_freq = args_calidad(int(audio.get("rate", 0)), a_cd,
-                                           destino)
+    frecuencia, motivo_freq = args_calidad(int(audio.get("rate", 0)),
+                                           int(audio.get("bits", 0)),
+                                           objetivo, destino)
     bajar = bool(frecuencia)
     # Un WAV o un FLAC guardan lo mismo que un ALAC ocupando bastante mas, y
     # ademas iTunes no lee el FLAC: pasarlos merece la pena aunque suenen bien.
@@ -244,8 +257,8 @@ class DownStats:
     fallidas: list[tuple[str, str]] = field(default_factory=list)
 
     def summary(self) -> str:
-        texto = (f"Calidad CD: {self.revisadas} miradas | "
-                 f"{self.altas} por encima | {self.bajadas} bajadas")
+        texto = (f"Calidad: {self.revisadas} miradas | "
+                 f"{self.altas} por encima del techo | {self.bajadas} bajadas")
         if self.ahorrado:
             texto += f" | {self.ahorrado / (1024 * 1024):.0f} MB liberados"
         if self.fallidas:
@@ -258,14 +271,14 @@ class DownStats:
 def downsample_library(cfg: Config, log: Callable[[str], None],
                        should_stop: Callable[[], bool] | None = None
                        ) -> DownStats:
-    """Baja a 16 bits / 44,1 kHz lo que se haya quedado por encima.
+    """Baja al techo elegido lo que se haya quedado por encima.
 
     Un ALAC de 24 bits y 192 kHz ocupa cinco veces mas y **no lo lee todo el
     mundo**: rekordbox, sin ir mas lejos, se cierra sin decir nada al cargarlo.
     iTunes si, y por eso el problema no se ve hasta que lo abres en otro sitio.
 
     Es lo mismo que hace el repaso de la biblioteca, pero sin medir el volumen,
-    que es lo que tarda. Aqui solo se cambia la frecuencia: el volumen sale
+    que es lo que tarda. Aqui solo se cambia la calidad: el volumen sale
     exactamente igual que estaba, para bien o para mal.
     """
     parar = should_stop or (lambda: False)
@@ -280,40 +293,28 @@ def downsample_library(cfg: Config, log: Callable[[str], None],
     if not ffprobe:
         raise ConvertError("No se encuentra ffprobe, que viene con ffmpeg.")
 
+    objetivo = str(cfg.get("quality_target", POR_DEFECTO))
     log("")
-    log("== Bajar a calidad CD lo que se quedo por encima ==")
+    log("== Bajar lo que se quedo por encima del techo ==")
     if cfg.dry_run:
         log("  (simulacion: solo se dice cuales, no se toca nada)")
-    log("  aqui no se mide el volumen: solo cambia la frecuencia")
+    log(f"  techo: {OBJETIVOS_NOMBRE.get(objetivo, objetivo)}")
+    log("  aqui no se mide el volumen: solo cambia la calidad")
 
-    library = ITunesLibrary(log)
-    library.connect()
-    try:
-        canciones = list(_com_items(library.app.LibraryPlaylist.Tracks))
-        total = len(canciones)
-        log(f"  {total} canciones en la biblioteca")
-        for numero, track in enumerate(canciones, 1):
-            if parar():
-                log("  detenido por el usuario")
-                break
-            if numero % 250 == 0:
-                log(f"    {numero}/{total}... ({stats.altas} por encima)")
-            try:
-                _bajar_una(track, ffmpeg, ffprobe, cfg, log, stats)
-            except ConvertError:
-                raise           # sin disco: parar de verdad
-            except Exception as exc:  # noqa: BLE001
-                log(f"      se ha saltado por un error inesperado: {exc}")
-                stats.fallidas.append((f"cancion {numero}", str(exc)))
-    finally:
-        library.close()
+    def una(track: Any) -> None:
+        _bajar_una(track, ffmpeg, ffprobe, cfg, objetivo, log, stats)
+
+    recorrer_biblioteca(
+        log, parar, _a_prueba_de_balas(una, log, stats),
+        avisar=lambda n, t: log(f"    {n}/{t}... ({stats.altas} por encima)"))
 
     log(f"  {stats.summary()}")
     return stats
 
 
 def _bajar_una(track: Any, ffmpeg: str, ffprobe: str, cfg: Config,
-               log: Callable[[str], None], stats: DownStats) -> None:
+               objetivo: str, log: Callable[[str], None],
+               stats: DownStats) -> None:
     fichero = _fichero_de(track)
     if fichero is None:
         return
@@ -322,7 +323,9 @@ def _bajar_una(track: Any, ffmpeg: str, ffprobe: str, cfg: Config,
     if codec_args is None:
         return              # con perdida: bajarlo no ahorra y si estropea
     stats.revisadas += 1
-    frecuencia, motivo = args_calidad(int(audio.get("rate", 0)), True, fichero)
+    frecuencia, motivo = args_calidad(int(audio.get("rate", 0)),
+                                      int(audio.get("bits", 0)),
+                                      objetivo, fichero)
     if not frecuencia:
         return
 
@@ -383,31 +386,19 @@ def refresh_info(cfg: Config, log: Callable[[str], None],
     if cfg.dry_run:
         log("  (simulacion: solo se dice cuales harian falta)")
 
-    library = ITunesLibrary(log)
-    library.connect()
-    try:
-        canciones = list(_com_items(library.app.LibraryPlaylist.Tracks))
-        total = len(canciones)
-        log(f"  {total} canciones en la biblioteca")
-        for numero, track in enumerate(canciones, 1):
-            if parar():
-                log("  detenido por el usuario")
-                break
-            if numero % 500 == 0:
-                log(f"    {numero}/{total}...")
-            if _fichero_de(track) is None or not _parece_desfasada(track):
-                continue
+    def una(track: Any) -> None:
+        if _fichero_de(track) is None or not _parece_desfasada(track):
+            return
+        stats.miradas += 1
+        if cfg.dry_run:
+            return
+        try:
+            track.UpdateInfoFromFile()
+            stats.refrescadas += 1
+        except Exception as exc:  # noqa: BLE001 - iTunes ocupado, en uso...
+            stats.fallidas.append((str(getattr(track, "Name", "?")), str(exc)))
 
-            stats.miradas += 1
-            if cfg.dry_run:
-                continue
-            try:
-                track.UpdateInfoFromFile()
-                stats.refrescadas += 1
-            except Exception as exc:  # noqa: BLE001 - iTunes ocupado, en uso...
-                stats.fallidas.append((str(getattr(track, "Name", "?")), str(exc)))
-    finally:
-        library.close()
+    recorrer_biblioteca(log, parar, una, paso=500)
 
     log(f"  {stats.summary()}")
     return stats
@@ -447,7 +438,7 @@ def _convertir_a_alac(ffmpeg: str, fichero: Path, track: Any,
     cancion aparece con la exclamacion. Por eso el original no se borra hasta
     que iTunes ha aceptado la ruta nueva.
     """
-    nuevo = _nombre_libre(fichero.with_suffix(".m4a"))
+    nuevo = nombre_libre(fichero.with_suffix(".m4a"))
     error = _convertir(ffmpeg, fichero, nuevo, ["-c:a", "alac"], medida,
                        frecuencia)
     if error:
@@ -482,10 +473,10 @@ def _apuntar(hechas: dict[str, str] | None, fichero: Path) -> None:
         hechas[str(fichero)] = _marca(fichero)
 
 
-def _huella(minimo: float, maximo: float, a_cd: bool, con_perdida: bool,
+def _huella(minimo: float, maximo: float, objetivo: str, con_perdida: bool,
             a_alac: bool) -> str:
     """Con que criterios se repaso. Si cambian, lo apuntado ya no vale."""
-    return f"{minimo}|{maximo}|{a_cd}|{con_perdida}|{a_alac}"
+    return f"{minimo}|{maximo}|{objetivo}|{con_perdida}|{a_alac}"
 
 
 def _guardar(state: StateStore, hechas: dict[str, str], huella: str) -> None:
@@ -495,15 +486,6 @@ def _guardar(state: StateStore, hechas: dict[str, str], huella: str) -> None:
         state.save()
     except OSError:
         pass    # perder el apunte solo cuesta tiempo la proxima vez
-
-
-def _nombre_libre(destino: Path) -> Path:
-    """Un nombre que no pise nada de lo que ya haya en esa carpeta."""
-    candidato, numero = destino, 2
-    while candidato.exists():
-        candidato = destino.with_name(f"{destino.stem} ({numero}){destino.suffix}")
-        numero += 1
-    return candidato
 
 
 def _reescribir(ffmpeg: str, fichero: Path, codec_args: list[str],
