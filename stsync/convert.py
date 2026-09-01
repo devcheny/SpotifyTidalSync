@@ -234,7 +234,7 @@ class FlacConverter:
         # ffmpeg puede terminar diciendo que todo ha ido bien y dejar un .m4a
         # que iTunes acepta pero otros programas no. Se mira antes de dar la
         # conversion por buena: asi el original no se borra por las buenas.
-        malo = comprobar_m4a(target)
+        malo = comprobar_salida(target, source)
         if malo:
             self.stats.failed.append((source.name, malo))
             self.log(f"      ERROR: {malo}")
@@ -584,21 +584,73 @@ def args_calidad(rate: int, bits: int, objetivo: str,
     return args, f"{', '.join(motivos)} ({OBJETIVOS_NOMBRE[objetivo]})"
 
 
-def comprobar_m4a(salida: Path) -> str:
-    """Motivo por el que el .m4a recien escrito no vale, o "" si esta bien.
+def comprobar_salida(salida: Path, original: Path | None = None) -> str:
+    """Motivo por el que lo recien escrito NO puede sustituir al original.
 
-    Se mira siempre antes de dar una conversion por buena: mas vale repetirla
-    que quedarse con un fichero que iTunes acepta y otros programas no.
+    Esto es lo ultimo que se mira antes de machacar una cancion, asi que peca
+    de desconfiado a proposito. Que ffmpeg termine diciendo que todo ha ido
+    bien **no basta**: ya paso una vez que se dio por buena una conversion que
+    habia salido sin pista de audio, y al sustituir se perdio el original.
+
+    Se comprueban tres cosas, de la mas grave a la menos:
+
+    1. Que siga habiendo audio. Un .m4a con la portada y nada mas pesa cuatro
+       cientos de kilobytes y no da ningun error al abrirlo.
+    2. Que la cabecera declare su frecuencia. A cero, hay programas que se
+       cierran al leerla (ver args_calidad).
+    3. Que dure mas o menos lo mismo que el original. Bajar la calidad cambia
+       lo que ocupa, nunca lo que dura.
     """
     if salida.suffix.lower() not in CONTENEDOR_MP4:
         return ""
+    if not salida.is_file() or not salida.stat().st_size:
+        return "no se ha llegado a escribir"
+
+    cajas = _leer_moov(salida)
+    if cajas is None:
+        return "no tiene indice (moov): no es un MP4 valido"
+    if not (_buscar_caja(cajas, 0, len(cajas), b"alac")
+            or _buscar_caja(cajas, 0, len(cajas), b"mp4a")):
+        return ("ha salido SIN pista de audio, solo con la portada: se "
+                "descarta antes de que sustituya a la buena")
+
     declarada = frecuencia_declarada(salida)
-    if declarada is None:
-        return ""           # no se ha podido mirar: no se acusa sin pruebas
     if declarada == 0:
         return ("ha salido con la frecuencia a cero en la cabecera, que es lo "
                 "que hace que otros programas se cierren al abrirlo")
+
+    if original is not None and original.suffix.lower() in CONTENEDOR_MP4:
+        antes, ahora = duracion_mp4(original), duracion_mp4(salida)
+        # Un margen de dos segundos cubre el redondeo de los fotogramas.
+        if antes and ahora and abs(antes - ahora) > max(2.0, antes * 0.02):
+            return (f"dura {ahora:.0f}s y el original {antes:.0f}s: algo se ha "
+                    "quedado por el camino")
     return ""
+
+
+def duracion_mp4(source: Path) -> float:
+    """Lo que dura, sacado de la cabecera del propio fichero (sin ffprobe)."""
+    try:
+        datos = _leer_moov(source)
+    except OSError:
+        return 0.0
+    if datos is None:
+        return 0.0
+    caja = _buscar_caja(datos, 0, len(datos), b"mvhd")
+    if caja is None:
+        return 0.0
+    cuerpo = datos[caja[0]:caja[1]]
+    try:
+        version = cuerpo[0]
+        if version == 1:
+            escala = int.from_bytes(cuerpo[20:24], "big")
+            cuanto = int.from_bytes(cuerpo[24:32], "big")
+        else:
+            escala = int.from_bytes(cuerpo[12:16], "big")
+            cuanto = int.from_bytes(cuerpo[16:20], "big")
+    except IndexError:
+        return 0.0
+    return cuanto / escala if escala else 0.0
 
 
 def frecuencia_declarada(source: Path) -> int | None:
@@ -813,8 +865,10 @@ def args_caratula(codec: str) -> list[str]:
     if not codec:
         return ["-vn"]
     salida = ["-c:v", "copy"] if codec in ART_JPEG else ["-c:v", "mjpeg", "-q:v", "2"]
-    return ["-map", "0:v:0?"] + salida + ["-frames:v", "1",
-                                          "-disposition:v", "attached_pic"]
+    # Sin "-frames:v 1": marcarla como attached_pic ya dice que es una imagen
+    # suelta, y ese limite de fotogramas se llevo por delante la pista de audio
+    # de una cancion de verdad. Lo que no hace falta, no se pone.
+    return ["-map", "0:v:0?"] + salida + ["-disposition:v", "attached_pic"]
 
 
 def _leer_tags(ffprobe: str, source: Path) -> dict[str, str]:
