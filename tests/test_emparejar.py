@@ -24,6 +24,11 @@ LIBRARY = [
     FakeCom("Yesterday", "Boyz II Men", 5, 240),
     FakeCom("Blinding Lights", "The Weeknd", 6, 200),
     FakeCom("Titi Me Pregunto", "Bad Bunny", 7, 243),
+    FakeCom("Hotel California", "Eagles", 8, 391),
+    # La misma cancion del mismo artista, dos veces y con dos duraciones: el
+    # estudio y la del directo. Solo la duracion las distingue.
+    FakeCom("Redemption Song", "Bob Marley", 10, 227),
+    FakeCom("Redemption Song", "Bob Marley", 11, 348),
 ]
 
 
@@ -50,6 +55,18 @@ CASES = [
     ("sin artista y titulo ambiguo", td("Yesterday", []), None),
     ("interrogacion perdida en el titulo",
      td("Tití Me Preguntó", ["Bad Bunny"]), 7),
+
+    # --- que sea la misma grabacion, no solo el mismo titulo ---------------
+    ("misma cancion, duracion casi igual",
+     td("Hotel California", ["Eagles"], 395), 8),
+    ("el directo dura 41s mas: no es esa",
+     td("Hotel California", ["Eagles"], 432), None),
+    ("sin duracion no se penaliza",
+     td("Hotel California", ["Eagles"], 0), 8),
+    ("dos versiones tuyas: gana la que dura lo mismo",
+     td("Redemption Song", ["Bob Marley"], 345), 11),
+    ("y la otra tambien se acierta",
+     td("Redemption Song", ["Bob Marley"], 229), 10),
 ]
 
 
@@ -66,6 +83,34 @@ def main():
         ok = got == expected
         fallos += not ok
         print(f"{'OK  ' if ok else 'FALLA'} {description}: esperado={expected} obtenido={got}")
+
+    # El informe tiene que decir POR QUE, que si no parece que no la tengas.
+    motivo = index.explain(td("Hotel California", ["Eagles"], 432))
+    print(f"\nmotivo del descarte: {motivo}")
+    if "6:31" not in motivo or "7:12" not in motivo:
+        print("FALLA: el motivo deberia dar las dos duraciones")
+        fallos += 1
+
+    # Y se puede apagar: entonces vuelve a valer con que se llame igual.
+    suelto = LibraryIndex(check_duration=False)
+    for com in LIBRARY:
+        suelto.add(com)
+    entry = suelto.find(td("Hotel California", ["Eagles"], 432))
+    print(f"sin comprobar duracion: {entry.db_id if entry else None}")
+    if entry is None or entry.db_id != 8:
+        print("FALLA: sin la comprobacion deberia casar igual que antes")
+        fallos += 1
+
+    # Con el margen abierto a un minuto, el directo entra.
+    ancho = LibraryIndex(tolerance=60)
+    for com in LIBRARY:
+        ancho.add(com)
+    entry = ancho.find(td("Hotel California", ["Eagles"], 432))
+    print(f"con margen de 60s: {entry.db_id if entry else None}")
+    if entry is None or entry.db_id != 8:
+        print("FALLA: con 60s de margen deberia entrar")
+        fallos += 1
+
     print()
     print("todos correctos" if not fallos else f"{fallos} fallos")
     return 1 if fallos else 0

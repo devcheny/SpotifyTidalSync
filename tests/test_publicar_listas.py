@@ -9,7 +9,7 @@ AQUI = Path(__file__).resolve().parent
 sys.path.insert(0, str(AQUI.parent))
 from stsync import publish as mod
 from stsync.config import Config
-from stsync.itunes import LibraryIndex
+from stsync.itunes import LibraryIndex, _reglas
 from stsync.model import Track
 from stsync.publish import publish_playlists
 
@@ -87,8 +87,8 @@ class LibreriaFalsa:
     def is_writable(playlist):
         return not bool(getattr(playlist, "Smart", False))
 
-    def index(self):
-        index = LibraryIndex()
+    def index(self, cfg=None):
+        index = LibraryIndex(*_reglas(cfg))
         for com in BIBLIOTECA:
             index.add(com)
         self.log(f"  biblioteca falsa: {index.size} canciones")
@@ -342,6 +342,52 @@ for nombre, permitida in (("iTunes - Fiesta - Faltantes en iTunes", False),
                           ("Fiesta", True)):
     assert motor._playlist_allowed(_pl_key(nombre), nombre) is permitida, nombre
 print("11. las listas de faltantes se quedan fuera de la sincronizacion")
+
+
+# ===========================================================================
+# Que sea la misma grabacion, no solo el mismo titulo
+# ===========================================================================
+from stsync.model import same_recording
+
+MIA = Track(service="itunes", id="1", title="La Fama", artist="ROSALIA",
+            duration_ms=200_000, isrc="ESA012345678")
+IGUAL = Track(service="spotify", id="a", title="La Fama", artist="ROSALIA",
+              duration_ms=203_000)
+DIRECTO = Track(service="spotify", id="b", title="La Fama", artist="ROSALIA",
+                duration_ms=600_000)
+OTRO_ISRC = Track(service="spotify", id="c", title="La Fama", artist="ROSALIA",
+                  duration_ms=600_000, isrc="ESA012345678")
+SIN_DATO = Track(service="spotify", id="d", title="La Fama", artist="ROSALIA")
+
+assert same_recording(MIA, IGUAL) == "", same_recording(MIA, IGUAL)
+assert "otra version" in same_recording(MIA, DIRECTO), same_recording(MIA, DIRECTO)
+assert same_recording(MIA, OTRO_ISRC) == "", "mismo ISRC: manda el, no el reloj"
+assert same_recording(MIA, SIN_DATO) == "", "sin duracion no se penaliza"
+assert same_recording(MIA, DIRECTO, 600) == "", "con margen de sobra, entra"
+print("12. same_recording: ISRC manda, si no la duracion, y sin datos no juzga")
+
+# --- 13. la validacion corta de verdad al publicar --------------------------
+def publicar_con(**extra):
+    preparar()
+    largo = Track(service="spotify", id="directo", title="La Fama",
+                  artist="ROSALIA", duration_ms=600_000)
+    spotify.find_by_text = lambda titulo, artista: (
+        largo if titulo == "La Fama" else None)
+    return publish_playlists(
+        config(publish_to_spotify=True, publish_playlists=["Fiesta"], **extra),
+        TokensFalsos(), lambda m: None)
+
+
+stats = publicar_con()
+print("13. con validacion -> anadidas:", stats.anadidas,
+      "| motivos:", [m for _, _, m in stats.sin_equivalencia])
+assert stats.anadidas == 0, "dura 10:00 y la tuya 3:20: no es la misma"
+assert any("otra version" in m for _, _, m in stats.sin_equivalencia), \
+    stats.sin_equivalencia
+
+stats = publicar_con(match_check_duration=False)
+assert stats.anadidas == 1, "apagada la comprobacion, vuelve a colarse"
+print("    y apagandola vuelve a pasar, que para eso es un ajuste")
 
 print()
 print("PUBLICAR LISTAS OK")

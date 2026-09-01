@@ -5,7 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from stsync import itunes as mod
 from stsync.config import Config
-from stsync.itunes import LibraryIndex, complete_tags
+from stsync.itunes import LibraryIndex, _reglas, complete_tags
 from stsync.model import Track
 
 
@@ -48,8 +48,8 @@ class LibreriaFalsa:
     def close(self):
         pass
 
-    def index(self):
-        indice = LibraryIndex()
+    def index(self, cfg=None):
+        indice = LibraryIndex(*_reglas(cfg))
         for com in BIBLIOTECA:
             indice.add(com)
         return indice

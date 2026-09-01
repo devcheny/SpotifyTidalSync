@@ -90,6 +90,40 @@ emparejamiento dudoso.**
 Las búsquedas fallidas se cachean 30 días para no gastar cuota de API repitiendo
 lo que ya se sabe que no está.
 
+### Que sea la misma grabación, no solo el mismo título
+
+El audio **no se puede comparar**: de Spotify y de TIDAL solo llegan datos, nunca
+el fichero, así que no hay forma de contrastar la onda. Una huella acústica
+(Chromaprint y compañía) tampoco sirve aquí, porque hace falta el audio de los dos
+lados y del suyo no dispones.
+
+Lo que sí identifica una grabación concreta es el **ISRC**, y donde lo hay manda
+él. El problema son las que no lo traen: ahí el emparejamiento es por texto, y
+*Bohemian Rhapsody* puede ser el disco, el directo de Wembley o una versión de un
+grupo de tributo. Por eso, cuando no hay ISRC que compare, se exige además que
+**duren más o menos lo mismo**:
+
+| | |
+|---|---|
+| Mismo ISRC en los dos lados | Vale, sin mirar nada más |
+| Sin ISRC, y la duración cuadra | Vale |
+| Sin ISRC, y se van más del margen | **Se descarta**, y el informe dice cuánto dura cada una |
+| Alguna de las dos no da su duración | Vale: sin dato no se castiga |
+
+El margen son **7 segundos** por defecto, en *Ajustes*. Un remaster se queda en uno
+o dos; un directo, un *radio edit* o una versión extendida se van mucho más. Si
+alguna vez te deja fuera algo que sí tenías, súbelo o desmarca la casilla: la
+comprobación entera se puede apagar.
+
+Esto vale para los tres emparejamientos —Spotify ↔ TIDAL, TIDAL → iTunes y el de
+la pestaña Publicar—, y lo descartado aparece en el informe con el motivo
+completo, del estilo `la tuya (Eagles - Hotel California) dura 6:31 y esta 7:12:
+parece otra version`.
+
+De paso, cuando en tu biblioteca hay **dos versiones de la misma canción del mismo
+artista**, ahora se queda con la que dura lo mismo en vez de con la primera que
+encuentre.
+
 ## Opciones
 
 | Ajuste | Qué hace |

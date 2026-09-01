@@ -5,7 +5,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from stsync import itunes as itunes_mod
 from stsync.config import Config
-from stsync.itunes import ITunesSync, LibraryIndex
+from stsync.itunes import ITunesSync, LibraryIndex, _reglas
 from stsync.model import Track
 
 
@@ -81,8 +81,8 @@ class FakeLibrary:
     def is_writable(playlist):
         return not playlist.Smart
 
-    def index(self):
-        index = LibraryIndex()
+    def index(self, cfg=None):
+        index = LibraryIndex(*_reglas(cfg))
         for com in LIBRARY:
             index.add(com)
         return index

@@ -6,7 +6,7 @@ equipo de desarrollo pelado.
 
 | Prueba | Qué cubre |
 |---|---|
-| `test_emparejar.py` | Que una canción de TIDAL encuentre la suya en iTunes: acentos, `feat.`, `(Remastered)`, recopilatorios, erratas de una letra… **y sobre todo lo que NO debe casar**, que es donde está el peligro. |
+| `test_emparejar.py` | Que una canción de TIDAL encuentre la suya en iTunes: acentos, `feat.`, `(Remastered)`, recopilatorios, erratas de una letra… **y sobre todo lo que NO debe casar**, que es donde está el peligro: entre otras, que el directo no se cuele por llamarse igual que la del disco, y que con dos versiones tuyas gane la que dura lo mismo. |
 | `test_playlists.py` | El motor TIDAL → iTunes: crear y actualizar listas, simulación, espejo, y que la lista de faltantes suelte lo que ya no falta. |
 | `test_tidal.py` | El parseo de la API: nombres de artista incluidos, el formato antiguo y el reintento si TIDAL rechaza el `include`. |
 | `test_convertir.py` | El conversor FLAC → ALAC con un ffmpeg de mentira: nombres que chocan, calidad CD, completar las etiquetas que faltan, borrar o mover el original, y que un fallo no deje restos. |
