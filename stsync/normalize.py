@@ -228,6 +228,120 @@ def _revisar(track: Any, ffmpeg: str, ffprobe: str, cfg: Config,
 
 
 @dataclass
+class DownStats:
+    revisadas: int = 0
+    altas: int = 0              # por encima de la calidad CD
+    bajadas: int = 0
+    ahorrado: int = 0           # bytes que se dejan de ocupar
+    sin_refrescar: int = 0
+    fallidas: list[tuple[str, str]] = field(default_factory=list)
+
+    def summary(self) -> str:
+        texto = (f"Calidad CD: {self.revisadas} miradas | "
+                 f"{self.altas} por encima | {self.bajadas} bajadas")
+        if self.ahorrado:
+            texto += f" | {self.ahorrado / (1024 * 1024):.0f} MB liberados"
+        if self.fallidas:
+            texto += f" | {len(self.fallidas)} con error"
+        if self.sin_refrescar:
+            texto += f" | {self.sin_refrescar} sin releer en iTunes"
+        return texto
+
+
+def downsample_library(cfg: Config, log: Callable[[str], None],
+                       should_stop: Callable[[], bool] | None = None
+                       ) -> DownStats:
+    """Baja a 16 bits / 44,1 kHz lo que se haya quedado por encima.
+
+    Un ALAC de 24 bits y 192 kHz ocupa cinco veces mas y **no lo lee todo el
+    mundo**: rekordbox, sin ir mas lejos, se cierra sin decir nada al cargarlo.
+    iTunes si, y por eso el problema no se ve hasta que lo abres en otro sitio.
+
+    Es lo mismo que hace el repaso de la biblioteca, pero sin medir el volumen,
+    que es lo que tarda. Aqui solo se cambia la frecuencia: el volumen sale
+    exactamente igual que estaba, para bien o para mal.
+    """
+    parar = should_stop or (lambda: False)
+    stats = DownStats()
+
+    ffmpeg = find_ffmpeg(str(cfg.get("ffmpeg_path", "")))
+    if not ffmpeg:
+        raise ConvertError(
+            "No se encuentra ffmpeg. Instalalo con 'winget install Gyan.FFmpeg' "
+            "o indica su ruta en la pestana Convertir a ALAC.")
+    ffprobe = _buscar_ffprobe(ffmpeg)
+    if not ffprobe:
+        raise ConvertError("No se encuentra ffprobe, que viene con ffmpeg.")
+
+    log("")
+    log("== Bajar a calidad CD lo que se quedo por encima ==")
+    if cfg.dry_run:
+        log("  (simulacion: solo se dice cuales, no se toca nada)")
+    log("  aqui no se mide el volumen: solo cambia la frecuencia")
+
+    library = ITunesLibrary(log)
+    library.connect()
+    try:
+        canciones = list(_com_items(library.app.LibraryPlaylist.Tracks))
+        total = len(canciones)
+        log(f"  {total} canciones en la biblioteca")
+        for numero, track in enumerate(canciones, 1):
+            if parar():
+                log("  detenido por el usuario")
+                break
+            if numero % 250 == 0:
+                log(f"    {numero}/{total}... ({stats.altas} por encima)")
+            try:
+                _bajar_una(track, ffmpeg, ffprobe, cfg, log, stats)
+            except ConvertError:
+                raise           # sin disco: parar de verdad
+            except Exception as exc:  # noqa: BLE001
+                log(f"      se ha saltado por un error inesperado: {exc}")
+                stats.fallidas.append((f"cancion {numero}", str(exc)))
+    finally:
+        library.close()
+
+    log(f"  {stats.summary()}")
+    return stats
+
+
+def _bajar_una(track: Any, ffmpeg: str, ffprobe: str, cfg: Config,
+               log: Callable[[str], None], stats: DownStats) -> None:
+    fichero = _fichero_de(track)
+    if fichero is None:
+        return
+    audio = leer_audio(ffprobe, fichero)
+    codec_args = SIN_PERDIDA.get(str(audio.get("codec", "")))
+    if codec_args is None:
+        return              # con perdida: bajarlo no ahorra y si estropea
+    stats.revisadas += 1
+    if not supera_calidad_cd(audio):
+        return
+
+    stats.altas += 1
+    antes = fichero.stat().st_size
+    log(f"  ~ {fichero.name}  ({audio.get('rate')} Hz, "
+        f"{audio.get('bits')} bits, {antes / (1024 * 1024):.0f} MB)")
+    if cfg.dry_run:
+        return
+
+    error = _reescribir(ffmpeg, fichero, codec_args, None, True,
+                        normalizar=False)
+    if error:
+        log(f"      no se pudo: {error}")
+        stats.fallidas.append((fichero.name, error))
+        return
+    stats.bajadas += 1
+    stats.ahorrado += max(0, antes - fichero.stat().st_size)
+
+    try:
+        track.UpdateInfoFromFile()
+    except Exception as exc:  # noqa: BLE001 - iTunes ocupado, fichero en uso...
+        stats.sin_refrescar += 1
+        log(f"      bajada, pero iTunes no ha releido sus datos: {exc}")
+
+
+@dataclass
 class RefreshStats:
     miradas: int = 0
     refrescadas: int = 0
@@ -384,14 +498,16 @@ def _nombre_libre(destino: Path) -> Path:
 
 
 def _reescribir(ffmpeg: str, fichero: Path, codec_args: list[str],
-                medida: dict[str, str] | None, bajar: bool) -> str:
+                medida: dict[str, str] | None, bajar: bool,
+                normalizar: bool = True) -> str:
     """Convierte a un temporal y solo entonces sustituye el original.
 
     Asi una cancion que falle a medias no se queda destrozada: el fichero de
     siempre no se toca hasta que hay uno nuevo entero.
     """
     temporal = fichero.with_name(f".{fichero.stem}.normalizando{fichero.suffix}")
-    error = _convertir(ffmpeg, fichero, temporal, codec_args, medida, bajar)
+    error = _convertir(ffmpeg, fichero, temporal, codec_args, medida, bajar,
+                       normalizar)
     if error:
         return error
 
@@ -403,7 +519,8 @@ def _reescribir(ffmpeg: str, fichero: Path, codec_args: list[str],
 
 
 def _convertir(ffmpeg: str, entrada: Path, salida: Path, codec_args: list[str],
-               medida: dict[str, str] | None, bajar: bool) -> str:
+               medida: dict[str, str] | None, bajar: bool,
+               normalizar: bool = True) -> str:
     """Reescribe la cancion con el volumen arreglado. Devuelve "" si va bien.
 
     Se mapea el audio y, aparte, la caratula marcada como tal: con un simple
@@ -423,7 +540,9 @@ def _convertir(ffmpeg: str, entrada: Path, salida: Path, codec_args: list[str],
         orden = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
                  "-i", str(entrada), "-map", "0:a:0"]
         orden += args_caratula(arte) if con_caratula else ["-vn"]
-        orden += ["-af", loudnorm_con(medida)] + codec_args
+        if normalizar:
+            orden += ["-af", loudnorm_con(medida)]
+        orden += codec_args
         if bajar:
             orden += ["-ar", str(CD_RATE), "-sample_fmt", CD_FORMAT]
         if salida.suffix.lower() in (".m4a", ".mp4"):
