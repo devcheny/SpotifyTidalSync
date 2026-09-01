@@ -18,11 +18,9 @@ from typing import Any, Callable, Iterator
 
 from .config import Config
 from .http import ApiError
-from .model import Track, normalize
+from .model import (DURATION_TOLERANCE_S, Track, mmss, normalize,
+                    same_length)
 from .tidal import TidalClient
-
-# Margen al comparar duraciones cuando varias canciones comparten titulo.
-DURATION_TOLERANCE_S = 7.0
 
 # Cada lectura de un campo cruza la frontera COM: avisamos de vez en cuando.
 INDEX_PROGRESS_EVERY = 1000
@@ -30,6 +28,14 @@ INDEX_PROGRESS_EVERY = 1000
 
 class ITunesError(RuntimeError):
     """iTunes no esta disponible o ha rechazado una operacion."""
+
+
+def _reglas(cfg: Config | None) -> tuple[bool, float]:
+    """Como de estricto se compara: (mirar la duracion, margen en segundos)."""
+    if cfg is None:
+        return True, DURATION_TOLERANCE_S
+    return (bool(cfg.get("match_check_duration", True)),
+            float(cfg.get("match_duration_tolerance", DURATION_TOLERANCE_S)))
 
 
 def diagnose() -> tuple[bool, str]:
@@ -149,8 +155,8 @@ class ITunesLibrary:
             return True
 
     # -- biblioteca ---------------------------------------------------------
-    def index(self) -> "LibraryIndex":
-        index = LibraryIndex()
+    def index(self, cfg: Config | None = None) -> "LibraryIndex":
+        index = LibraryIndex(*_reglas(cfg))
         tracks = self.app.LibraryPlaylist.Tracks
         total = tracks.Count
         self.log(f"  leyendo la biblioteca de iTunes ({total} canciones)...")
@@ -204,10 +210,13 @@ class LibraryIndex:
     que suelen venir con "Varios Artistas", se tratan como artista desconocido.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, check_duration: bool = True,
+                 tolerance: float = DURATION_TOLERANCE_S) -> None:
         self._by_pair: dict[tuple[str, str], list[_Entry]] = {}
         self._by_title: dict[str, list[_Entry]] = {}
         self._by_artist: dict[str, list[_Entry]] = {}
+        self.check_duration = check_duration
+        self.tolerance = tolerance
         self.size = 0
 
     def add(self, com_track: Any) -> None:
@@ -233,6 +242,22 @@ class LibraryIndex:
         self.size += 1
 
     def find(self, track: Track) -> _Entry | None:
+        """La cancion de tu biblioteca que es esa, o None.
+
+        Lo que devuelve el emparejamiento por texto pasa ademas por la
+        duracion: dos canciones pueden llamarse igual y no ser la misma
+        grabacion (el directo, el radio edit, la version de otro).
+        """
+        entry = self._match(track)
+        if entry is None or not self.check_duration:
+            return entry
+        return entry if self._fits(entry, track) else None
+
+    def _fits(self, entry: _Entry, track: Track) -> bool:
+        return same_length(entry.duration_s, track.duration_ms / 1000.0,
+                           self.tolerance)
+
+    def _match(self, track: Track) -> _Entry | None:
         variants = _title_variants(track.title)
         if not variants:
             return None
@@ -242,7 +267,9 @@ class LibraryIndex:
         for artist in (track.credit, track.artist):
             found = self._by_pair.get((variants[0], normalize(artist)))
             if found:
-                return found[0]
+                # Del mismo artista puedes tener el disco y el directo: si hay
+                # varias, manda la duracion en vez del orden de la biblioteca.
+                return _closest_duration(found, track.duration_ms, self.tolerance)
 
         wanted = _tokens(track.credit)
         candidates = self._candidates(variants)
@@ -252,7 +279,8 @@ class LibraryIndex:
         if len(compatible) == 1:
             return compatible[0]
         if compatible:
-            return _closest_duration(compatible, track.duration_ms)
+            return _closest_duration(compatible, track.duration_ms,
+                                     self.tolerance)
 
         # 3. la etiqueta de iTunes perdio el acento y dejo "Carr?": el nombre
         #    queda cortado, asi que solo se puede comparar por como empieza.
@@ -267,7 +295,8 @@ class LibraryIndex:
         if dudosos:
             if len(dudosos) == 1 and not track.duration_ms:
                 return dudosos[0]
-            elegido = _same_duration(dudosos, track.duration_ms)
+            elegido = _same_duration(dudosos, track.duration_ms,
+                                     self.tolerance)
             if elegido is not None:
                 return elegido
 
@@ -278,6 +307,14 @@ class LibraryIndex:
 
     def explain(self, track: Track) -> str:
         """Por que no se encontro, para que el informe lo diga."""
+        # Lo primero, el caso que mas despista: la tienes, se llama igual, y
+        # aun asi se ha descartado porque no dura lo mismo.
+        rechazada = self._match(track) if self.check_duration else None
+        if rechazada is not None and not self._fits(rechazada, track):
+            return (f"la tuya ({rechazada.artist} - {rechazada.title}) dura "
+                    f"{mmss(rechazada.duration_s)} y esta "
+                    f"{mmss(track.duration_ms / 1000.0)}: parece otra version")
+
         candidates = self._candidates(_title_variants(track.title))
         if candidates:
             artistas = sorted({e.artist or "(sin artista)" for e in candidates})
@@ -422,21 +459,23 @@ def _digits(text: str) -> str:
     return "".join(char for char in text if char.isdigit())
 
 
-def _closest_duration(entries: list[_Entry], duration_ms: int) -> _Entry:
+def _closest_duration(entries: list[_Entry], duration_ms: int,
+                      tolerance: float = DURATION_TOLERANCE_S) -> _Entry:
     if not duration_ms:
         return entries[0]
     wanted = duration_ms / 1000.0
     best = min(entries, key=lambda e: abs(e.duration_s - wanted))
-    return best if abs(best.duration_s - wanted) <= DURATION_TOLERANCE_S else entries[0]
+    return best if abs(best.duration_s - wanted) <= tolerance else entries[0]
 
 
-def _same_duration(entries: list[_Entry], duration_ms: int) -> _Entry | None:
+def _same_duration(entries: list[_Entry], duration_ms: int,
+                   tolerance: float = DURATION_TOLERANCE_S) -> _Entry | None:
     """Como _closest_duration, pero sin artista que valga no se arriesga."""
     if not duration_ms:
         return None
     wanted = duration_ms / 1000.0
     best = min(entries, key=lambda e: abs(e.duration_s - wanted))
-    return best if abs(best.duration_s - wanted) <= DURATION_TOLERANCE_S else None
+    return best if abs(best.duration_s - wanted) <= tolerance else None
 
 
 # --------------------------------------------------------------------------
@@ -487,7 +526,7 @@ class ITunesSync:
         library = ITunesLibrary(self.log)
         library.connect()
         try:
-            index = library.index()
+            index = library.index(self.cfg)
             self.log(f"  indice listo: {index.size} canciones utilizables")
             for raw in selected:
                 if self.should_stop():
@@ -710,7 +749,7 @@ def complete_tags(cfg: Config, tidal: TidalClient,
     library = ITunesLibrary(log)
     library.connect()
     try:
-        index = library.index()
+        index = library.index(cfg)
         log(f"  indice listo: {index.size} canciones utilizables")
         sync = ITunesSync(cfg, tidal, log, parar)
         listas = sync._select_playlists(None)
@@ -806,7 +845,7 @@ def inspect_track(cfg: Config, tidal: TidalClient, query: str,
     library = ITunesLibrary(log)
     library.connect()
     try:
-        index = LibraryIndex()
+        index = LibraryIndex(*_reglas(cfg))
         en_itunes: list[Any] = []
         for com in _com_items(library.app.LibraryPlaylist.Tracks):
             index.add(com)
