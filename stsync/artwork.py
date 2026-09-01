@@ -23,7 +23,8 @@ from typing import Any, Callable
 from .config import Config
 from .convert import (ART_JPEG, CONTENEDOR_MP4, NO_WINDOW, POR_DEFECTO,
                       TIMEOUT_S, ConvertError, args_calidad, args_caratula,
-                      caratula_de, find_ffmpeg, informe_fichero, leer_audio,
+                      caratula_de, comprobar_salida, find_ffmpeg,
+                      informe_fichero, leer_audio,
                       _buscar_ffprobe)
 from .itunes import recorrer_biblioteca
 from .normalize import (SIN_PERDIDA, _borrar, _fichero_de, _reescribir,
@@ -217,6 +218,13 @@ def _reparar(ffmpeg: str, fichero: Path, arte: str, quitar: bool) -> str:
         lineas = (hecho.stderr or "").strip().splitlines()
         _borrar(temporal)
         return lineas[-1] if lineas else "ffmpeg fallo"
+
+    # Lo mismo que en el repaso: no se machaca una cancion buena por un
+    # fichero que ha salido sin audio, aunque ffmpeg diga que todo fue bien.
+    malo = comprobar_salida(temporal, fichero)
+    if malo:
+        _borrar(temporal)
+        return malo
 
     fallo = _sustituir(temporal, fichero)
     if fallo:

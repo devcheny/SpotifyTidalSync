@@ -19,7 +19,7 @@ from typing import Any, Callable
 from .config import Config
 from .convert import (CD_RATE, NO_WINDOW, OBJETIVOS_NOMBRE, POR_DEFECTO,
                       TIMEOUT_S, ConvertError, args_calidad, args_caratula,
-                      caratula_de, comprobar_m4a, find_ffmpeg, leer_audio,
+                      caratula_de, comprobar_salida, find_ffmpeg, leer_audio,
                       loudnorm_con, medir_volumen, nombre_libre,
                       volumen_actual,
                       _buscar_ffprobe)
@@ -550,7 +550,7 @@ def _convertir(ffmpeg: str, entrada: Path, salida: Path, codec_args: list[str],
             # ffmpeg puede terminar tan contento y dejar un .m4a que iTunes
             # acepta pero otros programas no. Se comprueba antes de que llegue
             # a sustituir al que ya estaba bien.
-            malo = comprobar_m4a(salida)
+            malo = comprobar_salida(salida, entrada)
             if not malo:
                 return ""
             _borrar(salida)
