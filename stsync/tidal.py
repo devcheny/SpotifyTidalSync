@@ -206,7 +206,8 @@ class TidalClient:
     def playlist_tracks(self, playlist_id: str) -> list[Track]:
         return self._collect(f"/playlists/{playlist_id}/relationships/items")
 
-    def create_playlist(self, name: str, description: str = "") -> dict[str, Any]:
+    def create_playlist(self, name: str, description: str = "",
+                        publica: bool = False) -> dict[str, Any]:
         if self.cfg.dry_run:
             self.log(f"    [dry-run] crearia la playlist de TIDAL: {name}")
             return {"id": "dry-run", "attributes": {"name": name}}
@@ -216,7 +217,9 @@ class TidalClient:
                 "attributes": {
                     "name": name,
                     "description": description[:500],
-                    "accessType": "UNLISTED",
+                    # UNLISTED se ve con el enlace pero no sale en tu
+                    # perfil; PUBLIC si. Nunca se pone sin pedirlo.
+                    "accessType": "PUBLIC" if publica else "UNLISTED",
                 },
             }
         }

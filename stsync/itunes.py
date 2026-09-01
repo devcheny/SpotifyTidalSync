@@ -115,6 +115,22 @@ class ITunesLibrary:
                 continue
         return None
 
+    def user_playlists(self) -> list[Any]:
+        """Las playlists que has hecho tu, sin las inteligentes ni las del
+        sistema (Musica, Peliculas, Anadidos recientemente...)."""
+        out = []
+        for item in _com_items(self.app.LibrarySource.Playlists):
+            try:
+                if int(item.Kind) != 2 or int(item.SpecialKind) != 0:
+                    continue
+                if bool(item.Smart):
+                    continue
+                if item.Name:
+                    out.append(item)
+            except Exception:  # noqa: BLE001 - entrada ilegible, se ignora
+                continue
+        return out
+
     def create_playlist(self, name: str) -> Any:
         try:
             return self.app.CreatePlaylist(name)

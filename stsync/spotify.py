@@ -149,14 +149,16 @@ class SpotifyClient:
             url = page.get("next")
         return out
 
-    def create_playlist(self, name: str, description: str = "") -> dict[str, Any]:
+    def create_playlist(self, name: str, description: str = "",
+                        publica: bool = False) -> dict[str, Any]:
         if self.cfg.dry_run:
             self.log(f"    [dry-run] crearia la playlist de Spotify: {name}")
             return {"id": "dry-run", "name": name}
         return self.http.request(
             "POST", f"{API}/users/{self.me()['id']}/playlists",
             headers=self._headers(),
-            json_body={"name": name, "description": description[:300], "public": False},
+            json_body={"name": name, "description": description[:300],
+                       "public": publica},
         )
 
     def add_to_playlist(self, playlist_id: str, ids: list[str]) -> None:
