@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 
 from . import scheduler
 from .config import Config
-from .convert import DONE_DIR, ConvertError, FlacConverter
+from .convert import (DONE_DIR, ConvertError, FlacConverter, informe_fichero)
 from .convert import diagnose as flac_diagnose
 from .http import ApiError
 from .itunes import ITunesError, complete_tags
@@ -914,13 +914,24 @@ class App(tk.Tk):
         self.refresh_button = ttk.Button(fila, text="Releer datos en iTunes",
                                          command=self._start_refresh)
         self.refresh_button.pack(side="left", padx=(20, 0))
+        self.inspect_button = ttk.Button(fila, text="Examinar un fichero...",
+                                         command=self._start_inspect)
+        self.inspect_button.pack(side="left", padx=(8, 0))
 
-        ttk.Label(caja, text="Lo segundo es para cuando iTunes sigue diciendo "
+        ttk.Label(caja, text="'Releer datos' es para cuando iTunes sigue diciendo "
                              "9216 kbps de una cancion que ya esta en 1411: se "
                              "queda con lo que anoto el dia que la importo, y "
                              "esto le obliga a releer el fichero.",
                   style="Muted.TLabel", wraplength=740,
                   justify="left").pack(anchor="w", pady=(8, 0))
+        ttk.Label(caja, text="'Examinar un fichero' cuenta todo lo que se sabe de "
+                             "una cancion: contenedor, streams, etiquetas, si el "
+                             "indice va al principio, si el fichero llega entero "
+                             "y si el audio se decodifica sin errores. Cuando un "
+                             "reproductor se cierra sin decir por que, la via es "
+                             "examinar la que falla y una que funcione y comparar.",
+                  style="Muted.TLabel", wraplength=740,
+                  justify="left").pack(anchor="w", pady=(6, 0))
 
     def _start_artwork(self, simular: bool = False) -> None:
         if self.worker and self.worker.is_alive():
@@ -944,6 +955,34 @@ class App(tk.Tk):
                                   self.stop_flag.is_set)
             self.queue.put(("ok", stats.summary()))
         except (ConvertError, ITunesError) as exc:
+            self.queue.put(("error", str(exc)))
+        except Exception as exc:  # noqa: BLE001
+            self.queue.put(("error", f"Error inesperado: {exc}"))
+        finally:
+            self.queue.put(("done", None))
+
+    def _start_inspect(self) -> None:
+        if self.worker and self.worker.is_alive():
+            return
+        inicial = str(self.cfg.get("flac_folder", "")) or ""
+        elegido = filedialog.askopenfilename(
+            parent=self, title="Elige la cancion que quieres examinar",
+            initialdir=inicial if Path(inicial).is_dir() else None,
+            filetypes=[("Musica", "*.m4a *.mp3 *.flac *.wav *.aif *.aiff *.m4b"),
+                       ("Todos", "*.*")])
+        if not elegido:
+            return
+        ruta = Path(elegido)
+        self._set_busy(True)
+        self._append(f"Examinando {ruta.name}...")
+        self.worker = threading.Thread(target=self._inspect_worker, args=(ruta,),
+                                       daemon=True)
+        self.worker.start()
+
+    def _inspect_worker(self, ruta: Path) -> None:
+        try:
+            self.queue.put(("informe", (ruta.name, informe_fichero(self.cfg, ruta))))
+        except ConvertError as exc:
             self.queue.put(("error", str(exc)))
         except Exception as exc:  # noqa: BLE001
             self.queue.put(("error", f"Error inesperado: {exc}"))
@@ -1593,6 +1632,7 @@ class App(tk.Tk):
         self.library_button.configure(state="disabled" if busy else "normal")
         self.art_button.configure(state="disabled" if busy else "normal")
         self.refresh_button.configure(state="disabled" if busy else "normal")
+        self.inspect_button.configure(state="disabled" if busy else "normal")
         self.publish_button.configure(state="disabled" if busy else "normal")
         self.pub_load_button.configure(state="disabled" if busy else "normal")
         self.update_button.configure(state="disabled" if busy else "normal")
@@ -1630,6 +1670,10 @@ class App(tk.Tk):
                 elif kind == "update_error":
                     self.update_button.configure(state="normal")
                     self.update_status.configure(text=str(payload), fg="#ff6b6b")
+                elif kind == "informe":
+                    nombre, texto = payload  # type: ignore[misc]
+                    self._append(texto)
+                    TextWindow(self, Path(nombre), contenido=texto)
                 elif kind == "itunes_lists":
                     self._set_publish_lists(list(payload))  # type: ignore[arg-type]
                     self._append(f"{len(payload)} playlists leidas de iTunes.", "ok")
@@ -1765,16 +1809,20 @@ class TextWindow(tk.Toplevel):
 
     MAX_BYTES = 400_000
 
-    def __init__(self, app: "App", path: Path) -> None:
+    def __init__(self, app: "App", path: Path,
+                 contenido: str | None = None) -> None:
         super().__init__(app)
         self.title(path.name)
         self.geometry("820x560")
         self.configure(bg=BG)
 
-        try:
-            raw = path.read_text(encoding="utf-8", errors="replace")
-        except OSError as exc:
-            raw = f"No se pudo leer el fichero:\n{exc}"
+        if contenido is not None:
+            raw = contenido        # un informe recien hecho, no un fichero
+        else:
+            try:
+                raw = path.read_text(encoding="utf-8", errors="replace")
+            except OSError as exc:
+                raw = f"No se pudo leer el fichero:\n{exc}"
         aviso = ""
         if len(raw) > self.MAX_BYTES:
             # Un registro puede llegar a 2 MB: interesa el final, no el principio.
