@@ -550,6 +550,11 @@ tal cual.
 
 ## Resolución de problemas
 
+**No llego a un botón, se queda por debajo del borde** — no debería pasar: cada
+pestaña se desplaza sola en cuanto su contenido no cabe, con la barra a la
+derecha y la rueda del ratón. Si la ventana está muy baja y aun así no ves la
+barra, agrándala un poco: hay un mínimo de 560×360.
+
 **`did not find executable at '...\python.exe'`** — estás usando un `.venv`
 copiado de otro equipo. Borra la carpeta `.venv` y ejecuta `instalar.bat`.
 
