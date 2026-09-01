@@ -11,3 +11,5 @@ tests/prueba-flac/
 tests/prueba-updates/
 tests/ultima-medicion.txt
 tests/prueba-biblioteca/
+tests/prueba-caratulas/
+tests/prueba-examinar/
