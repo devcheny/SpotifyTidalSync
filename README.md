@@ -391,7 +391,7 @@ está la casilla para **quitar la portada** en vez de convertirla.
 Desde esta versión el conversor y el repaso ya dejan la portada en JPEG por su
 cuenta, así que esto es solo para lo convertido antes.
 
-**Bajar la calidad de lo alto.** El arreglo del crash de rekordbox, y merece la
+**Revisar y arreglar ficheros.** El arreglo del crash de rekordbox, y merece la
 pena entender por qué. En un MP4 la frecuencia de muestreo va en la cabecera como un
 número de 16.16 bits: **la parte entera son 16 bits, o sea hasta 65535 Hz**. Una
 canción de 192 kHz no cabe, así que ffmpeg deja ese campo **a cero** y apunta la
@@ -404,10 +404,21 @@ sobreviven — rekordbox se cierra al analizar la canción, sin mensaje.
 16 bits / 44,1 kHz ->  frecuencia en la cabecera: 44100 Hz  <- bien
 ```
 
-El botón recorre la biblioteca y reescribe lo que pase del techo que tengas
-elegido. **No mide el volumen**, que es lo que tarda en el repaso completo: aquí
-solo cambia la calidad, así que va rápido. El volumen se queda exactamente como
-estuviera.
+El botón recorre la biblioteca y reescribe lo que tenga algo mal, por dos
+motivos:
+
+| Qué encuentra | Por qué está mal |
+|---|---|
+| **Por encima del techo** | No puede declarar su frecuencia en la cabecera, y ocupa cinco veces más. |
+| **Con saltos en la línea de tiempo** | Su tabla `stts` declara fotogramas imposibles, y ahí es donde rekordbox se cierra. |
+
+**No se pierde nada al repararlos**: ALAC, FLAC y WAV son formatos sin pérdida,
+así que descodificar y volver a codificar devuelve exactamente las mismas
+muestras — solo cambia el encuadre, que es justo lo que estaba mal. Y **no mide
+el volumen**, que es lo que tarda en el repaso completo, así que va rápido; el
+volumen se queda exactamente como estuviera.
+
+Con *Probar* te dice cuántos hay de cada clase sin tocar nada.
 
 ### Hasta qué calidad se graba
 

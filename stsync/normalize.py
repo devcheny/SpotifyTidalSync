@@ -20,8 +20,8 @@ from .config import Config
 from .convert import (CD_RATE, NO_WINDOW, OBJETIVOS_NOMBRE, POR_DEFECTO,
                       TIMEOUT_S, ConvertError, args_calidad, args_caratula,
                       caratula_de, comprobar_salida, filtro_audio, find_ffmpeg,
-                      leer_audio, medir_volumen, nombre_libre, volumen_actual,
-                      _buscar_ffprobe, _rate_de)
+                      fotogramas_imposibles, leer_audio, medir_volumen,
+                      nombre_libre, volumen_actual, _buscar_ffprobe, _rate_de)
 from .itunes import ITunesError, recorrer_biblioteca
 from .store import StateStore
 
@@ -251,15 +251,17 @@ def _revisar(track: Any, ffmpeg: str, ffprobe: str, cfg: Config,
 @dataclass
 class DownStats:
     revisadas: int = 0
-    altas: int = 0              # por encima de la calidad CD
-    bajadas: int = 0
+    altas: int = 0              # por encima del techo de calidad
+    con_saltos: int = 0         # con huecos en la tabla de tiempos
+    bajadas: int = 0            # reescritas, por lo que fuera
     ahorrado: int = 0           # bytes que se dejan de ocupar
     sin_refrescar: int = 0
     fallidas: list[tuple[str, str]] = field(default_factory=list)
 
     def summary(self) -> str:
-        texto = (f"Calidad: {self.revisadas} miradas | "
-                 f"{self.altas} por encima del techo | {self.bajadas} bajadas")
+        texto = (f"Ficheros: {self.revisadas} mirados | "
+                 f"{self.altas} por encima del techo | "
+                 f"{self.con_saltos} con saltos | {self.bajadas} arreglados")
         if self.ahorrado:
             texto += f" | {self.ahorrado / (1024 * 1024):.0f} MB liberados"
         if self.fallidas:
@@ -272,15 +274,20 @@ class DownStats:
 def downsample_library(cfg: Config, log: Callable[[str], None],
                        should_stop: Callable[[], bool] | None = None
                        ) -> DownStats:
-    """Baja al techo elegido lo que se haya quedado por encima.
+    """Reescribe los ficheros que tienen algo mal, por dos motivos:
 
-    Un ALAC de 24 bits y 192 kHz ocupa cinco veces mas y **no lo lee todo el
-    mundo**: rekordbox, sin ir mas lejos, se cierra sin decir nada al cargarlo.
-    iTunes si, y por eso el problema no se ve hasta que lo abres en otro sitio.
+    - **Estan por encima del techo de calidad.** Un ALAC de 24/192 ocupa cinco
+      veces mas y ni siquiera puede declarar su frecuencia en la cabecera.
+    - **Tienen saltos en la linea de tiempo**, de haberse normalizado sin
+      reencuadrar. Ver convert.fotogramas_imposibles.
 
-    Es lo mismo que hace el repaso de la biblioteca, pero sin medir el volumen,
-    que es lo que tarda. Aqui solo se cambia la calidad: el volumen sale
-    exactamente igual que estaba, para bien o para mal.
+    Los dos se arreglan igual: volviendo a escribir el fichero con la cadena de
+    filtros de ahora. Y se arreglan **sin perder nada**, porque estos formatos
+    son sin perdida: descodificar y volver a codificar devuelve exactamente las
+    mismas muestras, solo que bien encuadradas.
+
+    Aqui no se mide el volumen, que es lo que tarda en el repaso completo: sale
+    igual que estaba, para bien o para mal.
     """
     parar = should_stop or (lambda: False)
     stats = DownStats()
@@ -296,18 +303,19 @@ def downsample_library(cfg: Config, log: Callable[[str], None],
 
     objetivo = str(cfg.get("quality_target", POR_DEFECTO))
     log("")
-    log("== Bajar lo que se quedo por encima del techo ==")
+    log("== Revisar y arreglar los ficheros ==")
     if cfg.dry_run:
         log("  (simulacion: solo se dice cuales, no se toca nada)")
-    log(f"  techo: {OBJETIVOS_NOMBRE.get(objetivo, objetivo)}")
-    log("  aqui no se mide el volumen: solo cambia la calidad")
+    log(f"  techo de calidad: {OBJETIVOS_NOMBRE.get(objetivo, objetivo)}")
+    log("  y se arreglan los que tengan saltos en la linea de tiempo")
+    log("  aqui no se mide el volumen: sale igual que estaba")
 
     def una(track: Any) -> None:
         _bajar_una(track, ffmpeg, ffprobe, cfg, objetivo, log, stats)
 
     recorrer_biblioteca(
         log, parar, _a_prueba_de_balas(una, log, stats),
-        avisar=lambda n, t: log(f"    {n}/{t}... ({stats.altas} por encima)"))
+        avisar=lambda n, t: log(f"    {n}/{t}... ({stats.bajadas} arreglados)"))
 
     log(f"  {stats.summary()}")
     return stats
@@ -328,13 +336,21 @@ def _bajar_una(track: Any, ffmpeg: str, ffprobe: str, cfg: Config,
                                       int(audio.get("bits", 0)),
                                       objetivo, fichero,
                                       str(audio.get("codec", "")))
-    if not motivo:
+    motivos = []
+    if motivo:
+        stats.altas += 1
+        motivos.append(motivo)
+    saltos = fotogramas_imposibles(fichero)
+    if saltos:
+        stats.con_saltos += 1
+        motivos.append(saltos)
+    if not motivos:
         return
 
-    stats.altas += 1
     antes = fichero.stat().st_size
-    log(f"  ~ {fichero.name}  ({audio.get('rate')} Hz, "
-        f"{audio.get('bits')} bits, {antes / (1024 * 1024):.0f} MB)")
+    log(f"  ~ {fichero.name}  ({antes / (1024 * 1024):.0f} MB)")
+    for razon in motivos:
+        log(f"      {razon}")
     if cfg.dry_run:
         return
 
@@ -351,7 +367,7 @@ def _bajar_una(track: Any, ffmpeg: str, ffprobe: str, cfg: Config,
         track.UpdateInfoFromFile()
     except Exception as exc:  # noqa: BLE001 - iTunes ocupado, fichero en uso...
         stats.sin_refrescar += 1
-        log(f"      bajada, pero iTunes no ha releido sus datos: {exc}")
+        log(f"      arreglada, pero iTunes no ha releido sus datos: {exc}")
 
 
 @dataclass

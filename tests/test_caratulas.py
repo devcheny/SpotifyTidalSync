@@ -192,6 +192,33 @@ assert "loudnorm" not in " ".join(orden), "aqui no se normaliza, solo la calidad
 assert LibreriaFalsa.canciones[0].refrescada, "iTunes tiene que releerla"
 print("9. baja solo la de 192 kHz al techo, y sin tocar el volumen")
 
+# --- 9b. y arregla tambien las que tienen saltos en la linea de tiempo ------
+# Es lo que cerraba rekordbox: la cancion esta bien de calidad, pero su tabla
+# de tiempos declara un fotograma de 7666 muestras cuando el ALAC no pasa de
+# 4096. Se arregla reescribiendola, y sin perder nada.
+sys.path.insert(0, str(AQUI))
+from dobles import caja
+
+montar()
+rota = BANCO / "con-jpg.m4a"
+cookie = caja(b"alac", bytes(4) + (4096).to_bytes(4, "big")
+              + bytes(1) + bytes([16]) + bytes(14))
+entrada = caja(b"alac", bytes(24) + (44100 << 16).to_bytes(4, "big") + cookie)
+stts = caja(b"stts", bytes(4) + (2).to_bytes(4, "big")
+            + (100).to_bytes(4, "big") + (4096).to_bytes(4, "big")
+            + (1).to_bytes(4, "big") + (7666).to_bytes(4, "big"))
+stbl = caja(b"stbl", caja(b"stsd", bytes(8) + entrada) + stts)
+rota.write_bytes(caja(b"ftyp", b"M4A ")
+                 + caja(b"moov", caja(b"trak", caja(b"mdia",
+                                                    caja(b"minf", stbl)))))
+LibreriaFalsa.canciones = [Com(rota)]
+lineas = []
+stats = downsample_library(config(), lineas.append)
+print("9b. con saltos ->", stats.summary())
+assert stats.con_saltos == 1, stats.con_saltos
+assert stats.bajadas == 1, "hay que reescribirla aunque la calidad este bien"
+assert any("saltos" in l for l in lineas), lineas
+
 # El mismo trabajo con el otro techo llega hasta la calidad CD.
 montar()
 (BANCO / "hires-con-jpg.m4a").write_bytes(b"original hires")

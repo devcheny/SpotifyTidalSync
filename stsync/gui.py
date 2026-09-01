@@ -929,7 +929,7 @@ class App(tk.Tk):
 
         fila_cd = ttk.Frame(caja, style="Card.TFrame")
         fila_cd.pack(anchor="w", pady=(0, 10))
-        self.down_button = ttk.Button(fila_cd, text="Bajar la calidad de lo alto",
+        self.down_button = ttk.Button(fila_cd, text="Revisar y arreglar ficheros",
                                       style="Accent.TButton",
                                       command=self._start_downsample)
         self.down_button.pack(side="left")
@@ -1014,13 +1014,15 @@ class App(tk.Tk):
         """El texto del boton cuenta el techo que hay elegido ahora mismo."""
         objetivo = self.calidad_var.get()
         self.down_label.configure(
-            text="Una cancion de 24 bits y 192 kHz no se puede declarar en un "
-                 ".m4a: ese campo de la cabecera solo llega a 65535 Hz, asi "
-                 "que se queda a CERO. iTunes tira igual, pero rekordbox se "
-                 "cierra al analizarla. Esto reescribe lo que pase del techo "
-                 f"que tengas puesto ({OBJETIVOS_NOMBRE.get(objetivo, objetivo)}"
-                 "), y de paso ocupa bastante menos. No se mide el volumen: "
-                 "solo cambia la calidad, asi que va rapido.")
+            text="Busca en la biblioteca los ficheros con algo mal y los "
+                 "vuelve a escribir. Dos cosas: las canciones por encima del "
+                 f"techo que tengas puesto ({OBJETIVOS_NOMBRE.get(objetivo, objetivo)}"
+                 "), que ni siquiera pueden declarar su frecuencia en la "
+                 "cabecera de un .m4a; y las que tengan saltos en la linea de "
+                 "tiempo, que es lo que cierra rekordbox al analizarlas. No se "
+                 "pierde nada: son formatos sin perdida y vuelven a salir con "
+                 "las mismas muestras. No se mide el volumen, asi que va "
+                 "rapido.")
 
     def _start_downsample(self, simular: bool = False) -> None:
         if self.worker and self.worker.is_alive():
