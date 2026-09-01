@@ -39,6 +39,11 @@ if os.environ.get("FALLA_TODO"):
     print("Error de prueba: no se pudo convertir", file=sys.stderr)
     sys.exit(1)
 
+if os.environ.get("SIN_ESPACIO"):
+    print("[out#0/ipod @ 0] Error closing file: No space left on device",
+          file=sys.stderr)
+    sys.exit(1)
+
 if os.environ.get("FALLA_CARATULA") and "attached_pic" in args:
     print("Could not write header: attached_pic no soportado", file=sys.stderr)
     sys.exit(1)

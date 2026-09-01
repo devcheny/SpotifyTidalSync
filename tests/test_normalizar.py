@@ -7,6 +7,7 @@ AQUI = Path(__file__).resolve().parent
 sys.path.insert(0, str(AQUI.parent))
 from stsync import normalize as mod
 from stsync.config import Config
+from stsync.convert import ConvertError
 from stsync.normalize import normalize_library
 
 BANCO = AQUI / "prueba-biblioteca"
@@ -153,9 +154,10 @@ print("5. simulacion -> diria que arregla", stats.normalizadas)
 assert stats.normalizadas == 3, stats.normalizadas
 assert (BANCO / "baja.m4a").read_bytes() == b"original baja", "no debe escribir"
 
+import os
+
 # --- 6. si ffmpeg falla, el original no se pierde ---------------------------
 montar()
-import os
 os.environ["FALLA_TODO"] = "1"
 try:
     stats = normalize_library(config(), lambda m: None)
@@ -186,6 +188,32 @@ print("   si iTunes no puede:", stats.sin_refrescar, "avisadas")
 assert stats.sin_refrescar == 3, stats.sin_refrescar
 assert any("no ha releido" in l for l in lineas), lineas
 assert "sin releer en iTunes" in stats.summary(), stats.summary()
+
+# --- 8. si el contenedor rechaza la caratula, se repite sin ella -----------
+montar()
+os.environ["FALLA_CARATULA"] = "1"
+try:
+    stats = normalize_library(config(), lambda m: None)
+finally:
+    os.environ.pop("FALLA_CARATULA", None)
+print("8. con la caratula rechazada -> normalizadas:", stats.normalizadas,
+      "| fallidas:", len(stats.fallidas))
+assert stats.normalizadas == 3, stats.normalizadas
+assert not stats.fallidas, stats.fallidas
+orden = (AQUI / "ultimo-comando.txt").read_text(encoding="utf-8").splitlines()
+assert "-vn" in orden, orden
+
+# --- 9. sin espacio en disco se para, en vez de fallar 7000 veces ----------
+montar()
+os.environ["SIN_ESPACIO"] = "1"
+try:
+    normalize_library(config(), lambda m: None)
+    raise SystemExit("ERROR: deberia haberse parado")
+except ConvertError as exc:
+    print("9. sin disco:", exc)
+    assert "sin espacio" in str(exc)
+finally:
+    os.environ.pop("SIN_ESPACIO", None)
 
 shutil.rmtree(BANCO)
 print()

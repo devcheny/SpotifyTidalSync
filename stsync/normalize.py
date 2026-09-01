@@ -110,8 +110,15 @@ def normalize_library(cfg: Config, log: Callable[[str], None],
                 break
             if numero % 100 == 0:
                 log(f"    {numero}/{total}... ({stats.normalizadas} arregladas)")
-            _revisar(track, ffmpeg, ffprobe, cfg, minimo, maximo, a_cd,
-                     con_perdida, log, stats)
+            try:
+                _revisar(track, ffmpeg, ffprobe, cfg, minimo, maximo, a_cd,
+                         con_perdida, log, stats)
+            except ConvertError:
+                raise           # sin disco: parar de verdad
+            except Exception as exc:  # noqa: BLE001
+                # Una cancion rara no puede llevarse por delante las que faltan.
+                log(f"      se ha saltado por un error inesperado: {exc}")
+                stats.fallidas.append((f"cancion {numero}", str(exc)))
     finally:
         library.close()
 
@@ -214,30 +221,14 @@ def _convertir_a_alac(ffmpeg: str, fichero: Path, track: Any,
     que iTunes ha aceptado la ruta nueva.
     """
     nuevo = _nombre_libre(fichero.with_suffix(".m4a"))
-    orden = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-             "-i", str(fichero), "-map", "0", "-c:v", "copy",
-             "-af", loudnorm_con(medida), "-c:a", "alac"]
-    if bajar:
-        orden += ["-ar", str(CD_RATE), "-sample_fmt", CD_FORMAT]
-    orden += ["-map_metadata", "0", "-movflags", "+faststart", str(nuevo)]
-
-    try:
-        salida = subprocess.run(orden, capture_output=True, text=True,
-                                encoding="utf-8", errors="replace",
-                                timeout=TIMEOUT_S, creationflags=NO_WINDOW)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        nuevo.unlink(missing_ok=True)
-        return str(exc)
-
-    if salida.returncode != 0 or not nuevo.is_file() or nuevo.stat().st_size == 0:
-        detalle = (salida.stderr or "").strip().splitlines()
-        nuevo.unlink(missing_ok=True)
-        return detalle[-1] if detalle else "ffmpeg fallo"
+    error = _convertir(ffmpeg, fichero, nuevo, ["-c:a", "alac"], medida, bajar)
+    if error:
+        return error
 
     try:
         track.Location = str(nuevo)
     except Exception as exc:  # noqa: BLE001 - iTunes puede no dejarse
-        nuevo.unlink(missing_ok=True)
+        _borrar(nuevo)
         return f"iTunes no ha aceptado la ruta nueva ({exc})"
 
     # Ya apunta al nuevo: el viejo sobra. Si no se puede borrar tampoco pasa
@@ -266,32 +257,69 @@ def _reescribir(ffmpeg: str, fichero: Path, codec_args: list[str],
     siempre no se toca hasta que hay uno nuevo entero.
     """
     temporal = fichero.with_name(f".{fichero.stem}.normalizando{fichero.suffix}")
-    orden = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-             "-i", str(fichero), "-map", "0", "-c:v", "copy",
-             "-af", loudnorm_con(medida)]
-    if bajar:
-        orden += ["-ar", str(CD_RATE), "-sample_fmt", CD_FORMAT]
-    orden += codec_args + ["-map_metadata", "0", str(temporal)]
-
-    try:
-        salida = subprocess.run(orden, capture_output=True, text=True,
-                                encoding="utf-8", errors="replace",
-                                timeout=TIMEOUT_S, creationflags=NO_WINDOW)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        temporal.unlink(missing_ok=True)
-        return str(exc)
-
-    if salida.returncode != 0 or not temporal.is_file() \
-            or temporal.stat().st_size == 0:
-        detalle = (salida.stderr or "").strip().splitlines()
-        temporal.unlink(missing_ok=True)
-        return detalle[-1] if detalle else "ffmpeg fallo"
+    error = _convertir(ffmpeg, fichero, temporal, codec_args, medida, bajar)
+    if error:
+        return error
 
     fallo = _sustituir(temporal, fichero)
     if fallo:
-        temporal.unlink(missing_ok=True)
+        _borrar(temporal)
         return f"no se pudo sustituir el fichero ({fallo})"
     return ""
+
+
+def _convertir(ffmpeg: str, entrada: Path, salida: Path, codec_args: list[str],
+               medida: dict[str, str] | None, bajar: bool) -> str:
+    """Reescribe la cancion con el volumen arreglado. Devuelve "" si va bien.
+
+    Se mapea el audio y, aparte, la caratula marcada como tal: con un simple
+    "-map 0 -c:v copy" el contenedor de los .m4a se niega a cerrar el fichero
+    ("Error closing file: Invalid argument") y no se salva ni una. Si aun asi
+    la rechaza, se repite sin ella antes de darla por perdida.
+    """
+    detalle = "ffmpeg fallo"
+    for con_caratula in (True, False):
+        orden = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                 "-i", str(entrada), "-map", "0:a:0"]
+        if con_caratula:
+            orden += ["-map", "0:v:0?", "-c:v", "copy",
+                      "-disposition:v", "attached_pic"]
+        else:
+            orden += ["-vn"]
+        orden += ["-af", loudnorm_con(medida)] + codec_args
+        if bajar:
+            orden += ["-ar", str(CD_RATE), "-sample_fmt", CD_FORMAT]
+        orden += ["-map_metadata", "0", str(salida)]
+
+        try:
+            hecho = subprocess.run(orden, capture_output=True, text=True,
+                                   encoding="utf-8", errors="replace",
+                                   timeout=TIMEOUT_S, creationflags=NO_WINDOW)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            _borrar(salida)
+            return str(exc)
+
+        if hecho.returncode == 0 and salida.is_file() and salida.stat().st_size:
+            return ""
+
+        lineas = (hecho.stderr or "").strip().splitlines()
+        detalle = lineas[-1] if lineas else "ffmpeg fallo"
+        _borrar(salida)
+        # Quedarse sin disco no se arregla repitiendo, y seguir con las 7000
+        # que faltan solo alarga la lista de fallos.
+        if "no space left" in detalle.lower():
+            raise ConvertError(
+                "El disco se ha quedado sin espacio. Haz sitio y vuelve a "
+                "lanzarlo: lo que ya estaba arreglado no se repite.")
+    return detalle
+
+
+def _borrar(fichero: Path) -> None:
+    """Quita un fichero a medias sin montar un drama si esta bloqueado."""
+    try:
+        fichero.unlink(missing_ok=True)
+    except OSError:
+        pass    # ya lo tiene otro; peor seria abortar el repaso entero
 
 
 def _sustituir(temporal: Path, fichero: Path) -> str:
