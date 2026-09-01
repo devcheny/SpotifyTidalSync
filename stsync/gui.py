@@ -21,7 +21,8 @@ from .http import ApiError
 from .itunes import ITunesError, complete_tags
 from .itunes import ITunesLibrary
 from .artwork import check_artwork
-from .normalize import normalize_library, refresh_info
+from .normalize import (downsample_library, normalize_library,
+                        refresh_info)
 from .publish import publish_playlists
 from .itunes import diagnose as itunes_diagnose
 from .oauth import OAuthError
@@ -896,6 +897,27 @@ class App(tk.Tk):
                   style="Muted.TLabel", wraplength=740,
                   justify="left").pack(anchor="w", pady=(2, 8))
 
+        fila_cd = ttk.Frame(caja, style="Card.TFrame")
+        fila_cd.pack(anchor="w", pady=(0, 10))
+        self.down_button = ttk.Button(fila_cd, text="Bajar a calidad CD",
+                                      style="Accent.TButton",
+                                      command=self._start_downsample)
+        self.down_button.pack(side="left")
+        self.try_down_button = ttk.Button(
+            fila_cd, text="Probar", width=8,
+            command=lambda: self._start_downsample(simular=True))
+        self.try_down_button.pack(side="left", padx=(8, 0))
+        tk.Label(caja, text="Una cancion de 24 bits y 192 kHz no se puede "
+                            "declarar en un .m4a: ese campo de la cabecera "
+                            "solo llega a 65535 Hz, asi que se queda a CERO. "
+                            "iTunes tira igual, pero rekordbox se cierra al "
+                            "analizarla. Bajarla a 44,1 kHz lo arregla, y de "
+                            "paso ocupa cinco veces menos. Aqui no se mide el "
+                            "volumen: solo cambia la frecuencia, asi que va "
+                            "rapido.",
+                 bg=CARD, fg=MUTED, wraplength=740,
+                 justify="left").pack(anchor="w", pady=(0, 12))
+
         quitar = tk.BooleanVar(value=bool(self.cfg.get("artwork_remove", False)))
         self.vars["artwork_remove"] = quitar
         ttk.Checkbutton(caja, variable=quitar,
@@ -953,6 +975,34 @@ class App(tk.Tk):
         try:
             stats = check_artwork(self._config_para(simular), self._q_log,
                                   self.stop_flag.is_set)
+            self.queue.put(("ok", stats.summary()))
+        except (ConvertError, ITunesError) as exc:
+            self.queue.put(("error", str(exc)))
+        except Exception as exc:  # noqa: BLE001
+            self.queue.put(("error", f"Error inesperado: {exc}"))
+        finally:
+            self.queue.put(("done", None))
+
+    def _start_downsample(self, simular: bool = False) -> None:
+        if self.worker and self.worker.is_alive():
+            return
+        if not self._save_settings(silent=True):
+            return
+        if not simular and not self.cfg.dry_run and not messagebox.askyesno(
+                "Bajar a calidad CD",
+                "Se van a reescribir las canciones grabadas por encima de "
+                "16 bits / 44,1 kHz.\n\n"
+                "El volumen se queda como esta: aqui solo cambia la "
+                "frecuencia.\n\n"
+                "Con el boton Probar ves antes cuantas son y cuanto ocupan. "
+                "¿Seguimos?"):
+            return
+        self._lanzar(self._downsample_worker, simular)
+
+    def _downsample_worker(self, simular: bool = False) -> None:
+        try:
+            stats = downsample_library(self._config_para(simular), self._q_log,
+                                       self.stop_flag.is_set)
             self.queue.put(("ok", stats.summary()))
         except (ConvertError, ITunesError) as exc:
             self.queue.put(("error", str(exc)))
@@ -1622,7 +1672,7 @@ class App(tk.Tk):
         for boton in (self.try_sync_button, self.try_itunes_button,
                       self.try_fix_button, self.try_flac_button,
                       self.try_library_button, self.try_publish_button,
-                      self.try_art_button):
+                      self.try_art_button, self.try_down_button):
             boton.configure(state="disabled" if busy else "normal")
         self.sync_button.configure(state="disabled" if busy else "normal")
         self.itunes_button.configure(state="disabled" if busy else "normal")
@@ -1633,6 +1683,7 @@ class App(tk.Tk):
         self.art_button.configure(state="disabled" if busy else "normal")
         self.refresh_button.configure(state="disabled" if busy else "normal")
         self.inspect_button.configure(state="disabled" if busy else "normal")
+        self.down_button.configure(state="disabled" if busy else "normal")
         self.publish_button.configure(state="disabled" if busy else "normal")
         self.pub_load_button.configure(state="disabled" if busy else "normal")
         self.update_button.configure(state="disabled" if busy else "normal")
