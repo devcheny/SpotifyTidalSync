@@ -1,0 +1,202 @@
+"""Portadas fuera de norma en los .m4a, con iTunes y ffmpeg de mentira."""
+import shutil
+import sys
+from pathlib import Path
+
+AQUI = Path(__file__).resolve().parent
+sys.path.insert(0, str(AQUI.parent))
+from stsync import artwork as mod
+from stsync import normalize as norm
+from stsync.artwork import check_artwork
+from stsync.config import Config
+from stsync.convert import args_caratula
+from stsync.normalize import refresh_info
+
+BANCO = AQUI / "prueba-caratulas"
+FFMPEG = str(AQUI / "ffmpeg-falso.bat")
+
+
+class Com:
+    def __init__(self, ruta, kind=1, bitrate=1411, rate=44100,
+                 refresco_falla=False):
+        self.Location = str(ruta)
+        self.Kind = kind
+        self.BitRate = bitrate
+        self.SampleRate = rate
+        self.Name = Path(ruta).name
+        self.refrescada = False
+        self.refresco_falla = refresco_falla
+
+    def UpdateInfoFromFile(self):
+        if self.refresco_falla:
+            raise OSError("iTunes esta ocupado")
+        self.refrescada = True
+
+
+class Coleccion:
+    def __init__(self, items):
+        self.items = items
+
+    @property
+    def Count(self):
+        return len(self.items)
+
+    def Item(self, i):
+        return self.items[i - 1]
+
+
+class LibreriaFalsa:
+    canciones: list = []
+
+    def __init__(self, log=None):
+        self.log = log or (lambda m: None)
+        self.app = type("App", (), {})()
+        self.app.LibraryPlaylist = type("PL", (), {})()
+        self.app.LibraryPlaylist.Tracks = Coleccion(LibreriaFalsa.canciones)
+
+    def connect(self):
+        self.log("  iTunes conectado (falso)")
+
+    def close(self):
+        pass
+
+
+def montar():
+    """Ficheros cuyo nombre le dice al ffprobe falso que portada llevan."""
+    if BANCO.exists():
+        shutil.rmtree(BANCO)
+    BANCO.mkdir(parents=True)
+    nombres = [
+        "con-png.m4a",        # portada en PNG -> hay que arreglarla
+        "otra-png.m4a",       # idem
+        "con-jpg.m4a",        # ya viene en JPEG -> no se toca
+        "sin-portada.m4a",    # no lleva ninguna
+        "con-png.flac",       # un FLAC con PNG esta en su derecho
+        "con-png.mp3",        # y un MP3 tambien
+    ]
+    for nombre in nombres:
+        (BANCO / nombre).write_bytes(b"original " + nombre.encode())
+    LibreriaFalsa.canciones = [Com(BANCO / n) for n in nombres]
+    LibreriaFalsa.canciones.append(Com(BANCO / "no-existe.m4a"))
+    return LibreriaFalsa.canciones
+
+
+def config(**extra):
+    cfg = Config(dict(Config().data))
+    cfg.set("ffmpeg_path", FFMPEG)
+    for clave, valor in extra.items():
+        cfg.set(clave, valor)
+    return cfg
+
+
+mod.ITunesLibrary = LibreriaFalsa
+norm.ITunesLibrary = LibreriaFalsa
+
+# --- 1. que args_caratula decide, que es el nucleo del arreglo --------------
+assert args_caratula("") == ["-vn"], args_caratula("")
+assert "-c:v" in args_caratula("mjpeg") and "copy" in args_caratula("mjpeg")
+png = args_caratula("png")
+assert "mjpeg" in png and "copy" not in png, png
+assert "-frames:v" in png, "una portada es una imagen, no un video"
+# Sin saber que trae, se recodifica: es lo unico seguro.
+assert "mjpeg" in args_caratula("desconocida")
+print("1. args_caratula: copia el JPEG, recodifica lo demas")
+
+# --- 2. simulacion: cuenta y no toca nada -----------------------------------
+montar()
+antes = {f.name: f.read_bytes() for f in BANCO.iterdir()}
+lineas = []
+stats = check_artwork(config(dry_run=True), lineas.append)
+print("\n".join(lineas))
+print()
+assert stats.revisadas == 4, stats.revisadas        # solo los .m4a que existen
+assert stats.malas == 2, stats.malas
+assert stats.correctas == 1, stats.correctas
+assert stats.sin_caratula == 1, stats.sin_caratula
+assert stats.arregladas == 0, "en simulacion no se toca nada"
+assert {f.name: f.read_bytes() for f in BANCO.iterdir()} == antes, "ha tocado algo"
+assert stats.formatos == {"png": 2, "mjpeg": 1}, stats.formatos
+print("2. simulacion: encuentra las dos PNG y no reescribe nada")
+
+# --- 3. de verdad: reescribe solo las malas ---------------------------------
+canciones = montar()
+stats = check_artwork(config(), lambda m: None)
+print("3.", stats.summary())
+assert stats.arregladas == 2, stats.arregladas
+assert (BANCO / "con-png.m4a").read_bytes() != b"original con-png.m4a"
+assert (BANCO / "con-jpg.m4a").read_bytes() == b"original con-jpg.m4a", \
+    "la que ya estaba bien no se toca"
+assert (BANCO / "con-png.flac").read_bytes() == b"original con-png.flac", \
+    "un FLAC con PNG no tiene ningun problema"
+# El audio se copia, que es lo que hace que esto sea rapido y sin perdida
+orden = (AQUI / "ultimo-comando.txt").read_text(encoding="utf-8").splitlines()
+assert "-c:a" in orden and orden[orden.index("-c:a") + 1] == "copy", orden
+assert "-af" not in orden, "aqui no se normaliza nada"
+assert "+faststart" in orden, orden
+# Y iTunes tiene que releerlas, que si no se queda con el tamano de antes
+arregladas = [c for c in canciones if "png.m4a" in c.Location]
+assert all(c.refrescada for c in arregladas), "iTunes no las ha releido"
+print("   audio copiado tal cual, y iTunes releyendo las dos")
+
+# --- 4. con la casilla puesta, la portada se quita --------------------------
+montar()
+check_artwork(config(artwork_remove=True), lambda m: None)
+orden = (AQUI / "ultimo-comando.txt").read_text(encoding="utf-8").splitlines()
+assert "-vn" in orden, orden
+assert "mjpeg" not in orden, orden
+print("4. quitar la portada en vez de convertirla")
+
+# --- 5. si ffmpeg falla, el fichero de siempre sigue entero -----------------
+import os
+montar()
+os.environ["FALLA_TODO"] = "1"
+try:
+    stats = check_artwork(config(), lambda m: None)
+finally:
+    del os.environ["FALLA_TODO"]
+print("5. con ffmpeg roto ->", stats.summary())
+assert stats.arregladas == 0, stats.arregladas
+assert len(stats.fallidas) == 2, stats.fallidas
+assert (BANCO / "con-png.m4a").read_bytes() == b"original con-png.m4a", \
+    "el original tiene que quedar intacto"
+assert not list(BANCO.glob(".*")), "no puede quedar ningun temporal"
+
+
+# ===========================================================================
+# Releer los datos en iTunes
+# ===========================================================================
+# --- 6. solo se releen las que declaran mas de lo que cabe en un CD ---------
+LibreriaFalsa.canciones = [
+    Com(BANCO / "con-jpg.m4a", bitrate=9216, rate=192000),   # dato viejo
+    Com(BANCO / "sin-portada.m4a", bitrate=1411, rate=44100),  # ya esta bien
+    Com(BANCO / "con-png.m4a", bitrate=900, rate=48000),     # 48 kHz: tambien
+    Com(BANCO / "no-existe.m4a", bitrate=9216, rate=192000),  # sin fichero
+]
+stats = refresh_info(config(), lambda m: None)
+print("6.", stats.summary())
+assert stats.miradas == 2, stats.miradas
+assert stats.refrescadas == 2, stats.refrescadas
+assert LibreriaFalsa.canciones[0].refrescada
+assert not LibreriaFalsa.canciones[1].refrescada, "esa ya declaraba lo correcto"
+assert LibreriaFalsa.canciones[2].refrescada
+
+# --- 7. si iTunes se niega, se apunta y se sigue ----------------------------
+LibreriaFalsa.canciones = [
+    Com(BANCO / "con-jpg.m4a", bitrate=9216, refresco_falla=True),
+    Com(BANCO / "con-png.m4a", bitrate=9216),
+]
+stats = refresh_info(config(), lambda m: None)
+print("7. con iTunes ocupado ->", stats.summary())
+assert stats.refrescadas == 1, stats.refrescadas
+assert len(stats.fallidas) == 1, stats.fallidas
+
+# --- 8. en simulacion se cuentan pero no se tocan ---------------------------
+LibreriaFalsa.canciones = [Com(BANCO / "con-jpg.m4a", bitrate=9216)]
+stats = refresh_info(config(dry_run=True), lambda m: None)
+assert stats.miradas == 1 and stats.refrescadas == 0, stats.summary()
+assert not LibreriaFalsa.canciones[0].refrescada
+print("8. la simulacion solo cuenta")
+
+shutil.rmtree(BANCO, ignore_errors=True)
+print()
+print("CARATULAS OK")

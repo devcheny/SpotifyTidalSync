@@ -16,6 +16,7 @@ equipo de desarrollo pelado.
 | `test_publicar.py` | La secuencia de git al publicar una version, con git sustituido por un registrador: comprueba donde empuja sin empujar nada. |
 | `test_normalizar.py` | El repaso de toda la biblioteca: que arregle lo que hace falta, deje lo demas, y que si ffmpeg falla el original no se pierda. |
 | `test_publicar_listas.py` | Los dos sentidos de la pestaña Publicar: llevar las listas de iTunes a Spotify y TIDAL (que las cree, cuáles quedan públicas, y que sin ISRC no se pueda enlazar en TIDAL) y traerlas de vuelta (que meta en iTunes lo que ya tienes, que apunte lo que no en la lista de faltantes y la limpie cuando deje de faltar, que no toque las inteligentes, y que esa lista no viaje a TIDAL). |
+| `test_caratulas.py` | Las portadas PNG dentro de un `.m4a`, que dejan el fichero fuera de norma: que las encuentre sin tocar nada en simulación, que al arreglarlas copie el audio tal cual (`-c:a copy`, sin normalizar), que no toque las que ya vienen en JPEG ni los FLAC, que un ffmpeg roto deje el original intacto y sin temporales, y que releer los datos en iTunes solo mire las que declaran más calidad de la que cabe en un CD. |
 | `test_borrar.py` | Que el borrado en una playlist de TIDAL mande el `meta` de cada entrada, sin el cual la API responde 400. |
 
 ## `test_tareas.py` va aparte

@@ -4,6 +4,10 @@ Con -show_format devuelve las etiquetas que le diga TAGS_FALSOS.
 Con -show_streams se inventa el stream de audio a partir del nombre del
 fichero: si lleva "hires" es de 24 bits y 192 kHz, y si no, calidad CD. El
 codec sale de la extension.
+
+Preguntando por el video (-select_streams v:0), que es donde va la portada, la
+inventa tambien por el nombre: "png" o "jpg" en el nombre dan ese formato, y
+sin ninguno de los dos el fichero no lleva caratula.
 """
 import json
 import os
@@ -12,7 +16,14 @@ import sys
 fichero = sys.argv[-1]
 nombre = os.path.basename(fichero).lower()
 
-if "-show_streams" in sys.argv:
+if "-show_streams" in sys.argv and "v:0" in sys.argv:
+    if "png" in nombre:
+        json.dump({"streams": [{"codec_name": "png"}]}, sys.stdout)
+    elif "jpg" in nombre or "jpeg" in nombre:
+        json.dump({"streams": [{"codec_name": "mjpeg"}]}, sys.stdout)
+    else:
+        json.dump({"streams": []}, sys.stdout)
+elif "-show_streams" in sys.argv:
     extension = os.path.splitext(nombre)[1]
     codec = {".m4a": "alac", ".flac": "flac", ".mp3": "mp3",
              ".wma": "wmav2", ".wav": "pcm_s16le"}.get(extension, "desconocido")

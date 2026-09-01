@@ -366,6 +366,35 @@ seleccionándolas y usando *Archivo → Biblioteca → Obtener información*.
 
 También `python main.py --biblioteca`.
 
+### Arreglar carátulas y refrescar iTunes
+
+Dos botones para dos problemas que salen justo después de convertir, y que no
+son el mismo aunque lo parezcan.
+
+**Repasar carátulas.** Un FLAC suele traer la portada en **PNG**, y dentro de un
+`.m4a` eso está fuera de norma: MP4 espera JPEG. iTunes la enseña igual, pero
+otros programas no perdonan — **rekordbox se cierra sin decir nada** al cargar
+esa canción. El botón recorre la biblioteca, busca los `.m4a` cuya portada no sea
+JPEG y los reescribe **copiando el audio tal cual** (`-c:a copy`): no se
+normaliza, no se recodifica y no se pierde ni un bit, así que son segundos por
+canción y nada que ver con el repaso de arriba. Los FLAC y los MP3 con portada
+PNG están en su derecho y no se tocan.
+
+Pulsa **Probar** primero: te dice cuántas hay y con qué formato viene la portada
+de cada una, sin escribir nada. Y si aun convertida a JPEG sigue dando guerra,
+está la casilla para **quitar la portada** en vez de convertirla.
+
+Desde esta versión el conversor y el repaso ya dejan la portada en JPEG por su
+cuenta, así que esto es solo para lo convertido antes.
+
+**Releer datos en iTunes.** Para cuando iTunes sigue diciendo *9216 kbps* de una
+canción que en disco ya está a 1411. No es un fallo de la conversión: iTunes se
+queda con lo que anotó el día que la importó, y el fichero solo se relee si se lo
+pides. El botón lo hace por ti, y solo sobre las que declaran más calidad de la
+que cabe en un CD, que son las únicas que pueden estar desfasadas. Si tu
+reproductor dice 1411 y iTunes 9216, el fichero está bien: el que miente es
+iTunes.
+
 ### Que lo revise solo una vez al día
 
 Dos formas, y puedes usar la que prefieras:
