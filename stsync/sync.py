@@ -15,7 +15,7 @@ from typing import Any, Callable
 from .config import Config
 from .convert import ConvertError, FlacConverter
 from .http import ApiError
-from .itunes import ITunesError, ITunesSync
+from .itunes import ITunesError, ITunesSync, _is_missing_list
 from .model import Track, normalize
 from .paths import reports_dir
 from .spotify import SpotifyClient
@@ -195,12 +195,11 @@ class SyncEngine:
         for name in sorted(names):
             if self.should_stop():
                 return
-            if not self._playlist_allowed(name):
-                continue
-
             sp_pl, td_pl = sp_lists.get(name), td_lists.get(name)
             display = (sp_pl or {}).get("name") or \
                       ((td_pl or {}).get("attributes") or {}).get("name") or name
+            if not self._playlist_allowed(name, display):
+                continue
 
             try:
                 self._sync_one_playlist(display, name, sp_pl, td_pl)
@@ -252,7 +251,11 @@ class SyncEngine:
             label=display,
         )
 
-    def _playlist_allowed(self, key: str) -> bool:
+    def _playlist_allowed(self, key: str, display: str = "") -> bool:
+        # Las listas de "lo que me falta" son un apunte para ti, no musica que
+        # replicar: se quedan donde nacen y no cruzan a la otra plataforma.
+        if display and _is_missing_list(display):
+            return False
         include = [_pl_key(n) for n in self.cfg.get("playlist_include", []) or []]
         exclude = [_pl_key(n) for n in self.cfg.get("playlist_exclude", []) or []]
         if include and key not in include:
