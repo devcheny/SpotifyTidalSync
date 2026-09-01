@@ -303,6 +303,53 @@ else:
     assert todas.get("title") == "Bachaton", "no pisa las que si ve ffprobe"
 
 
+# --- si iTunes retiene el FLAC, se insiste y luego se aparta ----------------
+# iTunes tiene el FLAC abierto un rato mientras decide que hacer con el, y
+# Windows no deja borrarlo hasta que lo suelta. Si se queda en la carpeta, la
+# proxima pasada lo convertiria otra vez y saldria un duplicado.
+import stsync.convert as conv
+
+folder = montar()
+intentos = {"n": 0}
+unlink_real = Path.unlink
+
+
+def unlink_terco(self, *a, **k):
+    """Falla las dos primeras veces, como iTunes soltandolo con calma."""
+    if self.suffix == ".flac":
+        intentos["n"] += 1
+        if intentos["n"] <= 2:
+            raise OSError(32, "lo tiene otro proceso")
+    return unlink_real(self, *a, **k)
+
+
+conv.ESPERA_FICHERO = 0.001
+Path.unlink = unlink_terco
+try:
+    stats = FlacConverter(config(folder), lambda m: None).run()
+finally:
+    Path.unlink = unlink_real
+print()
+print(f"borrado terco: {intentos['n']} intentos ->", stats.summary())
+assert intentos["n"] > 2, "no ha insistido"
+assert not [p for p in contenido(folder) if p.endswith(".flac")], \
+    "los FLAC tenian que acabar fuera"
+assert not stats.failed, stats.failed
+print("  insistiendo se borran igual")
+
+# Y si no hay manera, se aparta a _convertidos para no duplicarlo manana.
+folder = montar()
+Path.unlink = lambda self, *a, **k: (_ for _ in ()).throw(OSError(32, "ocupado"))
+try:
+    stats = FlacConverter(config(folder), lambda m: None).run()
+finally:
+    Path.unlink = unlink_real
+hay = contenido(folder)
+print("  si no hay manera ->", [p for p in hay if p.startswith(DONE_DIR)][:2])
+assert [p for p in hay if p.startswith(DONE_DIR + "/")], hay
+assert not [p for p in hay if p.endswith(".flac") and "/" not in p], hay
+
+
 # --- iTunes no puede ver el .m4a hasta que este terminado --------------------
 # Esa carpeta la vigila iTunes y toca todo lo que aparece dentro: con el
 # fichero de trabajo ahi, ni se le pueden poner las etiquetas ni se puede

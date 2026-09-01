@@ -103,9 +103,10 @@ MAX_M4A_RATE = 48000
 # en otra carpeta (ver FlacConverter._taller).
 EN_OBRAS = ".tmp"
 
-# Un fichero recien escrito puede estar ocupado un instante.
-INTENTOS_LECTURA = 5
-ESPERA_LECTURA = 0.3
+# Un fichero recien escrito, o uno que iTunes esta mirando, puede estar
+# ocupado un rato: ver _insistiendo.
+INTENTOS_FICHERO = 5
+ESPERA_FICHERO = 0.4
 
 # Lo que se convierte a ALAC: formatos sin perdida que iTunes o no lee, o lee
 # ocupando de mas. Los de con perdida (mp3, ogg, opus, wma) no entran: pasarlos
@@ -159,6 +160,24 @@ def _traer(origen: Path, destino: Path) -> str:
         return str(exc)
     _quitar(origen)
     return ""
+
+
+def _insistiendo(accion: Callable[[], Any]) -> tuple[Any, str]:
+    """Repite una operacion sobre ficheros que Windows puede negar un rato.
+
+    Devuelve (lo que saliera, motivo del ultimo fallo). Pasa constantemente:
+    iTunes se queda el fichero mientras lo mira, y el antivirus y el indexador
+    abren un instante todo lo recien escrito. A la primera falla y a la tercera
+    no, asi que insistir un poco ahorra la mitad de los errores.
+    """
+    ultimo = ""
+    for intento in range(INTENTOS_FICHERO):
+        try:
+            return accion(), ""
+        except OSError as exc:
+            ultimo = str(exc)
+            time.sleep(ESPERA_FICHERO * (intento + 1))
+    return None, ultimo
 
 
 def _quitar(ruta: Path) -> None:
@@ -455,22 +474,34 @@ class FlacConverter:
         return faltan
 
     def _retire(self, source: Path, folder: Path) -> None:
-        """El original ya sobra: si se queda, la proxima vez se duplicaria."""
-        if self.cfg.get("flac_delete_source", True):
-            try:
-                source.unlink()
-            except OSError as exc:
-                self.log(f"      no se pudo borrar el FLAC: {exc}")
-            return
+        """Sacar el original de la carpeta: si se queda, la proxima vez se
+        convertiria otra vez y saldria un duplicado.
+
+        Con paciencia, porque iTunes tiene el FLAC abierto un rato mientras
+        decide que hacer con el (no sabe leerlo, asi que acaba mandandolo a
+        "No anadido") y Windows no deja tocarlo hasta que lo suelta.
+        """
+        borrar = bool(self.cfg.get("flac_delete_source", True))
+        if borrar:
+            _, fallo = _insistiendo(source.unlink)
+            if not fallo:
+                return
+            self.log(f"      no se pudo borrar el FLAC: {fallo}")
+            self.log("      se intenta apartarlo, que si se queda ahi la "
+                     "proxima pasada lo convertiria otra vez")
 
         done = folder / DONE_DIR
-        try:
-            done.mkdir(exist_ok=True)
-            # Con su extension de siempre: un WAV archivado como .flac no hay
-            # programa que lo abra.
-            source.replace(_free_name(done, source.stem, source.suffix))
-        except OSError as exc:
-            self.log(f"      no se pudo mover el FLAC a {DONE_DIR}: {exc}")
+        # Con su extension de siempre: un WAV archivado como .flac no hay
+        # programa que lo abra.
+        destino = _free_name(done, source.stem, source.suffix)
+        _, fallo = _insistiendo(lambda: (done.mkdir(exist_ok=True),
+                                         source.replace(destino)))
+        if fallo:
+            self.log(f"      no se pudo mover el FLAC a {DONE_DIR}: {fallo}")
+            if borrar:
+                self.stats.failed.append(
+                    (source.name, "convertido, pero el original sigue en la "
+                                  "carpeta: la proxima pasada lo duplicaria"))
 
     # --------------------------------------------------------------- limpieza
     def _clean_empty_dirs(self, folder: Path) -> None:
@@ -923,17 +954,8 @@ def comprobar_salida(salida: Path, original: Path | None = None) -> str:
     if not salida.is_file() or not salida.stat().st_size:
         return "no se ha llegado a escribir"
 
-    cajas, fallo = None, ""
-    for intento in range(INTENTOS_LECTURA):
-        try:
-            cajas = _leer_moov(salida)
-            break
-        except OSError as exc:
-            # En Windows, un fichero recien escrito lo tiene abierto un
-            # instante el antivirus o el indexador: se espera y se reintenta.
-            fallo = str(exc)
-            time.sleep(ESPERA_LECTURA * (intento + 1))
-    else:
+    cajas, fallo = _insistiendo(lambda: _leer_moov(salida))
+    if fallo:
         return f"no se ha podido volver a leer: {fallo}"
     if cajas is None:
         return "no tiene indice (moov): no es un MP4 valido"
