@@ -258,6 +258,13 @@ class DownStats:
     bajadas: int = 0            # reescritas, por lo que fuera
     ahorrado: int = 0           # bytes que se dejan de ocupar
     sin_refrescar: int = 0
+    # De las que no se miran, por que no se miran. Sin esto, un "37 mirados"
+    # de 7047 canciones no se sabe si esta bien o si algo ha fallado en
+    # silencio 7000 veces.
+    sin_fichero: int = 0        # de la nube, o el fichero ya no esta
+    con_perdida: int = 0        # MP3, AAC...: recomprimirlas las estropea
+    ilegibles: int = 0          # ffprobe no ha sabido decir que son
+    porques: list[str] = field(default_factory=list)   # un par de ejemplos
     fallidas: list[tuple[str, str]] = field(default_factory=list)
 
     def summary(self) -> str:
@@ -271,6 +278,28 @@ class DownStats:
         if self.sin_refrescar:
             texto += f" | {self.sin_refrescar} sin releer en iTunes"
         return texto
+
+    def descartadas(self) -> str:
+        """Las que ni se han llegado a mirar, y por que. "" si no hay ninguna."""
+        partes = []
+        if self.con_perdida:
+            partes.append(f"{self.con_perdida} con perdida (MP3, AAC...), que "
+                          "no se tocan porque recomprimirlas las estropea")
+        if self.sin_fichero:
+            partes.append(f"{self.sin_fichero} sin fichero local (de la nube, "
+                          "o la ruta ya no existe)")
+        if self.ilegibles:
+            partes.append(f"{self.ilegibles} que ffprobe no ha sabido leer")
+        if not partes:
+            return ""
+        lineas = ["  no se han mirado: " + "; ".join(partes)]
+        lineas += [f"      p.ej. {porque}" for porque in self.porques]
+        return "\n".join(lineas)
+
+    def apuntar(self, porque: str) -> None:
+        """Guarda un ejemplo de por que se ha saltado una, sin repetirse."""
+        if porque and len(self.porques) < 3 and porque not in self.porques:
+            self.porques.append(porque)
 
 
 def downsample_library(cfg: Config, log: Callable[[str], None],
@@ -320,19 +349,32 @@ def downsample_library(cfg: Config, log: Callable[[str], None],
         avisar=lambda n, t: log(f"    {n}/{t}... ({stats.bajadas} arreglados)"))
 
     log(f"  {stats.summary()}")
+    descartadas = stats.descartadas()
+    if descartadas:
+        log(descartadas)
     return stats
 
 
 def _bajar_una(track: Any, ffmpeg: str, ffprobe: str, cfg: Config,
                objetivo: str, log: Callable[[str], None],
                stats: DownStats) -> None:
-    fichero = _fichero_de(track)
+    fichero, porque = _fichero_y_motivo(track)
     if fichero is None:
+        stats.sin_fichero += 1
+        stats.apuntar(porque)
         return
     audio = leer_audio(ffprobe, fichero)
-    codec_args = SIN_PERDIDA.get(str(audio.get("codec", "")))
+    codec = str(audio.get("codec", ""))
+    codec_args = SIN_PERDIDA.get(codec)
     if codec_args is None:
-        return              # con perdida: bajarlo no ahorra y si estropea
+        # Con perdida: bajarlo no ahorra y si estropea. Pero una que ffprobe
+        # no ha sabido leer no es lo mismo, y callarla seria taparla.
+        if codec:
+            stats.con_perdida += 1
+        else:
+            stats.ilegibles += 1
+            stats.apuntar(f"ffprobe no ha sabido leer {fichero.name}")
+        return
     stats.revisadas += 1
     frecuencia, motivo = args_calidad(int(audio.get("rate", 0)),
                                       int(audio.get("bits", 0)),
@@ -434,18 +476,30 @@ def _parece_desfasada(track: Any) -> bool:
         return False
 
 
-def _fichero_de(track: Any) -> Path | None:
-    """La ruta del fichero, si la cancion es un fichero local que existe."""
+def _fichero_y_motivo(track: Any) -> tuple[Path | None, str]:
+    """La ruta del fichero local, o **por que** no hay ninguna.
+
+    El motivo importa: una pasada que dice "37 mirados" de 7047 canciones no
+    se puede juzgar sin saber si las otras se han saltado porque son MP3, o
+    porque iTunes apunta a un sitio donde ya no esta el fichero.
+    """
     try:
         if int(track.Kind) != 1:      # 1 = fichero; lo demas es de la nube o CD
-            return None
+            return None, "no es un fichero local (de la nube, un CD, un stream)"
         ruta = str(track.Location or "")
-    except Exception:  # noqa: BLE001
-        return None
+    except Exception as exc:  # noqa: BLE001
+        return None, f"iTunes no ha dado sus datos ({exc})"
     if not ruta:
-        return None
+        return None, "iTunes no le ve ninguna ruta"
     fichero = Path(ruta)
-    return fichero if fichero.is_file() else None
+    if not fichero.is_file():
+        return None, f"la ruta que apunta iTunes no existe: {ruta}"
+    return fichero, ""
+
+
+def _fichero_de(track: Any) -> Path | None:
+    """La ruta del fichero, si la cancion es un fichero local que existe."""
+    return _fichero_y_motivo(track)[0]
 
 
 def _convertir_a_alac(ffmpeg: str, fichero: Path, track: Any,

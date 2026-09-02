@@ -229,6 +229,30 @@ assert orden[orden.index("-ar") + 1] == "44100", orden
 assert "-sample_fmt" in orden, "calidad CD si baja los bits"
 print("   y con el techo en calidad CD, a 44100 y 16 bits")
 
+# --- 9c. y dice que ha hecho con las que NO ha mirado ----------------------
+# Una pasada que dice "37 mirados" de 7047 canciones no se puede juzgar: hay
+# que saber si las otras se saltaron por ser MP3, porque iTunes apunta a un
+# sitio donde ya no esta el fichero, o porque ffprobe no supo leerlas. Sin
+# esto, un fallo que se deje fuera media biblioteca pasa por normal.
+montar()
+LibreriaFalsa.canciones = [
+    Com(BANCO / "hires-con-jpg.m4a"),     # sin perdida: esta si se mira
+    Com(BANCO / "con-png.mp3"),           # con perdida: no se toca
+    Com(BANCO / "no-existe.m4a"),         # iTunes apunta a donde no hay nada
+]
+(BANCO / "hires-con-jpg.m4a").write_bytes(b"original hires")
+lineas = []
+stats = downsample_library(config(dry_run=True), lineas.append)
+descarte = stats.descartadas()
+print("9c.", descarte.splitlines()[0].strip())
+assert stats.revisadas == 1, stats.revisadas
+assert stats.con_perdida == 1, stats.con_perdida
+assert stats.sin_fichero == 1, stats.sin_fichero
+assert "1 con perdida" in descarte, descarte
+assert "1 sin fichero local" in descarte, descarte
+assert "no-existe.m4a" in descarte, "hay que decir cual, no solo cuantas"
+assert any("no se han mirado" in l for l in lineas), lineas
+
 # --- 10. en simulacion se cuentan y no se toca nada -------------------------
 montar()
 (BANCO / "hires-con-jpg.m4a").write_bytes(b"original hires")

@@ -71,6 +71,7 @@ class ITunesLibrary:
     def __init__(self, log: Callable[[str], None] | None = None) -> None:
         self.log = log or (lambda _m: None)
         self.app: Any = None
+        self.total = 0          # cuantas dice iTunes que tiene, al conectar
         self._com_ready = False
 
     # -- conexion -----------------------------------------------------------
@@ -101,6 +102,7 @@ class ITunesLibrary:
                 "esta instalado (la version de apple.com; la de la Microsoft Store "
                 f"no se puede automatizar) y que se abre sin pedir nada. [{exc}]"
             ) from exc
+        self.total = int(count)
         self.log(f"  iTunes conectado: {count} canciones en la biblioteca")
 
     def close(self) -> None:
@@ -190,7 +192,12 @@ def recorrer_biblioteca(log: Callable[[str], None],
     try:
         canciones = list(_com_items(library.app.LibraryPlaylist.Tracks))
         total = len(canciones)
-        log(f"  {total} canciones en la biblioteca")
+        # Al conectar ya se ha dicho cuantas hay; repetirlo solo estorba. Se
+        # dice ahora si no cuadra, que entonces si importa: alguna cancion no
+        # se ha dejado leer y no va a pasar por la pasada.
+        if total != getattr(library, "total", total):
+            log(f"  ojo: solo se han podido leer {total} de "
+                f"{library.total} canciones")
         for numero, track in enumerate(canciones, 1):
             if parar():
                 log("  detenido por el usuario")
