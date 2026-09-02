@@ -30,7 +30,7 @@ from .oauth import OAuthError
 from .paths import app_dir, latest_report
 from .spotify import SpotifyClient
 from .store import StateStore, TokenStore
-from .sync import SyncEngine
+from .sync import PASOS, SyncEngine
 from .tidal import TidalClient
 from .updates import UpdateError, apply_release, check, current_version
 
@@ -505,6 +505,8 @@ class App(tk.Tk):
         self.schedule_label = ttk.Label(sched, text="", style="Muted.TLabel")
         self.schedule_label.pack(side="left", padx=(12, 0))
 
+        self._build_cola_box()
+
         self.progress = ttk.Progressbar(self.tab_main, mode="indeterminate")
         self.progress.pack(fill="x", pady=(12, 4))
 
@@ -520,6 +522,90 @@ class App(tk.Tk):
         self.log_text.pack(side="left", fill="both", expand=True)
         self.log_text.tag_configure("err", foreground="#ff6b6b")
         self.log_text.tag_configure("ok", foreground=SPOTIFY_GREEN)
+
+    # -- la cola: que va detras de cada sincronizacion -----------------------
+    def _build_cola_box(self) -> None:
+        """Las casillas de lo que se encadena, sacadas de sync.PASOS.
+
+        Se pintan de la misma lista que recorre el motor, asi que lo que se ve
+        aqui es literalmente lo que va a correr, en el mismo orden. Un paso
+        nuevo aparece solo.
+        """
+        caja = ttk.Frame(self.tab_main, style="Card.TFrame", padding=14)
+        caja.pack(fill="x", pady=(12, 0))
+
+        # Plegada de serie: nueve pasos con su explicacion ocupan mas que el
+        # registro, y el registro es lo que se mira mientras trabaja. El
+        # titulo dice cuantos hay puestos sin necesidad de abrirla.
+        cabecera = ttk.Frame(caja, style="Card.TFrame")
+        cabecera.pack(fill="x")
+        self.cola_boton = ttk.Button(cabecera, width=3, text="+",
+                                     command=self._toggle_cola)
+        self.cola_boton.pack(side="left", padx=(0, 8))
+        self.cola_titulo = ttk.Label(cabecera, text="", style="Head.TLabel")
+        self.cola_titulo.pack(side="left")
+
+        self.cola_detalle = ttk.Frame(caja, style="Card.TFrame")
+        ttk.Label(self.cola_detalle,
+                  text="Primero van siempre los favoritos y las playlists entre "
+                       "Spotify y TIDAL, segun las casillas de arriba. Detras "
+                       "se encadena esto, en este orden, y lo mismo hace la "
+                       "tarea automatica de cada 24 h. Si un paso falla, los "
+                       "demas siguen.",
+                  style="Muted.TLabel", wraplength=720,
+                  justify="left").pack(anchor="w", pady=(10, 10))
+
+        for numero, paso in enumerate(PASOS, 1):
+            fila = ttk.Frame(self.cola_detalle, style="Card.TFrame")
+            fila.pack(fill="x", pady=(0, 6))
+            var = self._casilla(paso.clave)
+            var.trace_add("write", lambda *_: self._refresh_cola())
+            ttk.Checkbutton(fila, variable=var,
+                            text=f"{numero}. {paso.nombre}").pack(anchor="w")
+            texto = paso.detalle
+            if paso.aviso:
+                texto += f"  ({paso.aviso})"
+            tk.Label(fila, text=texto, bg=CARD, fg=MUTED, wraplength=690,
+                     justify="left", font=("Segoe UI", 8)).pack(anchor="w",
+                                                                padx=(22, 0))
+
+        ttk.Button(self.cola_detalle, text="Guardar ajustes",
+                   command=self._save_settings).pack(anchor="w", pady=(4, 0))
+        self._refresh_cola()
+
+    def _casilla(self, clave: str) -> tk.BooleanVar:
+        """La variable de ese ajuste, compartida si ya existe en otra pestana.
+
+        Los pasos de la cola salen dos veces a proposito: en la cola y en la
+        pestana a la que pertenecen. Con la misma variable, marcarlo en un
+        sitio lo marca en el otro y solo hay una verdad que guardar.
+        """
+        var = self.vars.get(clave)
+        if not isinstance(var, tk.BooleanVar):
+            var = tk.BooleanVar(value=bool(self.cfg.get(clave)))
+            self.vars[clave] = var
+        return var
+
+    def _toggle_cola(self) -> None:
+        if self.cola_detalle.winfo_ismapped():
+            self.cola_detalle.pack_forget()
+        else:
+            self.cola_detalle.pack(fill="x")
+        self._refresh_cola()
+
+    def _refresh_cola(self) -> None:
+        """El titulo cuenta lo que hay puesto, tambien con la caja plegada."""
+        puestos = [paso for paso in PASOS if self.vars[paso.clave].get()]
+        abierta = self.cola_detalle.winfo_ismapped()
+        self.cola_boton.configure(text="-" if abierta else "+")
+        if not puestos:
+            resumen = "nada mas: solo Spotify y TIDAL"
+        elif len(puestos) == 1:
+            resumen = puestos[0].nombre.lower()
+        else:
+            resumen = f"{len(puestos)} de {len(PASOS)} pasos"
+        self.cola_titulo.configure(
+            text=f"Despues de sincronizar: {resumen}")
 
     def _account_card(self, parent: ttk.Frame, column: int, name: str,
                       color: str, command) -> tuple[ttk.Label, ttk.Button]:
@@ -563,9 +649,8 @@ class App(tk.Tk):
             ("itunes_missing_playlist",
              "Dejar en TIDAL una playlist '<nombre> - Faltantes en iTunes'"),
         ]:
-            var = tk.BooleanVar(value=bool(self.cfg.get(key)))
-            self.vars[key] = var
-            ttk.Checkbutton(options, text=text, variable=var).pack(anchor="w", pady=2)
+            ttk.Checkbutton(options, text=text,
+                            variable=self._casilla(key)).pack(anchor="w", pady=2)
 
         prefix_row = ttk.Frame(options, style="Card.TFrame")
         prefix_row.pack(anchor="w", pady=(10, 0))
@@ -816,8 +901,8 @@ class App(tk.Tk):
         options.pack(fill="x", pady=(12, 0))
         for key, text in (
             ("flac_after_sync",
-             "Convertir al terminar la sincronizacion, lo ultimo de la cola "
-             "(y en la tarea programada)"),
+             "Convertir al terminar la sincronizacion (es uno de los pasos de "
+             "la cola, en la pestana Sincronizacion)"),
             ("flac_normalize",
              "Normalizar el volumen (loudnorm, como el flac2alac.bat de siempre)"),
             ("flac_two_pass",
@@ -830,10 +915,9 @@ class App(tk.Tk):
             ("flac_delete_source",
              f"Borrar el FLAC al convertirlo (si no, se mueve a '{DONE_DIR}')"),
         ):
-            var = tk.BooleanVar(value=bool(self.cfg.get(key)))
-            self.vars[key] = var
-            ttk.Checkbutton(options, text=text, variable=var).pack(anchor="w",
-                                                                   pady=2)
+            ttk.Checkbutton(options, text=text,
+                            variable=self._casilla(key)).pack(anchor="w",
+                                                              pady=2)
 
         calidad = ttk.Frame(options, style="Card.TFrame")
         calidad.pack(anchor="w", pady=(12, 0))

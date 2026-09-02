@@ -53,8 +53,20 @@ DEFAULTS: dict[str, Any] = {
     "library_skip_done": True,        # no volver a medir lo ya repasado
     "artwork_remove": False,          # al repasar caratulas, quitarlas
                                       # en vez de pasarlas a JPEG
-    "flac_after_sync": False,         # convertir al terminar la sincronizacion
     "flac_schedule_time": "04:00",    # o repaso propio, una hora despues
+
+    # --- La cola: que se encadena detras de cada sincronizacion ---
+    # Tambien las hace la tarea diaria, que llama a lo mismo. El orden en que
+    # corren no es este, sino el de sync.PASOS. Todas apagadas por defecto:
+    # lo que toca ficheros no se enciende solo.
+    "flac_after_sync": False,         # convertir a ALAC lo que haya llegado
+    "publish_after_sync": False,      # subir las listas de iTunes a Spotify
+    "fix_after_sync": False,          # revisar y arreglar los ficheros
+    "artwork_after_sync": False,      # pasar a JPEG las portadas que no valgan
+    "artists_after_sync": False,      # completar datos desde TIDAL
+    "isrc_after_sync": False,         # completar los artistas por ISRC
+    "library_after_sync": False,      # repaso de volumen (lo mas lento)
+    "refresh_after_sync": False,      # que iTunes relea lo que ha cambiado
 
     # --- Publicar en Spotify y TIDAL las listas de iTunes ---
     "publish_to_spotify": True,       # replicar en Spotify

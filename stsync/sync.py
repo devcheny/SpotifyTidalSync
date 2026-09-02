@@ -87,10 +87,16 @@ class SyncEngine:
             self._sync_favorites()
         if self.cfg.sync_playlists and not self.should_stop():
             self._sync_playlists()
-        if self.cfg.get("itunes_enabled") and not self.should_stop():
-            self._sync_itunes()
-        if self.cfg.get("flac_after_sync") and not self.should_stop():
-            self._convert_flac()
+
+        # Y detras, lo que este marcado en la cola. Van en este orden a
+        # proposito: primero lo que trae canciones nuevas, luego lo que las
+        # convierte, luego lo que las arregla y al final lo que le cuenta a
+        # iTunes que han cambiado.
+        for paso in PASOS:
+            if self.should_stop():
+                break
+            if self.cfg.get(paso.clave):
+                self._encadenado(paso)
 
         self.state.last_sync = dt.datetime.now().isoformat(timespec="seconds")
         self.state.data["last_summary"] = self.stats.summary()
@@ -145,6 +151,47 @@ class SyncEngine:
             (f"itunes / {playlist}", song, motivo)
             for playlist, song, motivo in result.missing)
         self.log(f"  {result.summary()}")
+
+    # ------------------------------------------------------- cola de la sync
+    def _encadenado(self, paso: "Paso") -> None:
+        """Ejecuta un paso de la cola sin que un fallo suyo pare los demas.
+
+        Cada uno es independiente: que iTunes este cerrado no puede impedir
+        que se conviertan los FLAC, ni al reves. Lo que falle se apunta en el
+        resumen y se sigue.
+        """
+        self.log("")
+        try:
+            resumen = paso.hacer(self)
+        except (ApiError, ITunesError, ConvertError, OSError) as exc:
+            mensaje = f"{paso.nombre}: {exc}"
+            self.log(f"  ! {mensaje}")
+            self.stats.errors.append(mensaje)
+            return
+        except Exception as exc:  # noqa: BLE001 - un paso no tumba la cola
+            mensaje = f"{paso.nombre}: error inesperado: {exc}"
+            self.log(f"  ! {mensaje}")
+            self.stats.errors.append(mensaje)
+            return
+        if resumen:
+            self.log(f"  {resumen}")
+
+    def _pasada(self, funcion: Callable[..., Any]) -> str:
+        """Lanza una de las pasadas que recorren la biblioteca entera.
+
+        Todas tienen la misma forma -cfg, log, parar- y devuelven algo que
+        sabe resumirse, asi que aqui no hay nada especifico de ninguna.
+        """
+        return str(funcion(self.cfg, self.log, self.should_stop).summary())
+
+    def _cliente_de_artistas(self) -> Any:
+        """De donde salen los interpretes de una grabacion, por su ISRC.
+
+        Spotify si esta conectado, que responde a mas ISRC; si no, TIDAL.
+        """
+        if self.tokens.has("spotify"):
+            return self.spotify
+        return self.tidal
 
     # ------------------------------------------------------------------- FLAC
     def _convert_flac(self) -> None:
@@ -426,3 +473,113 @@ class Plan:
 
 def _pl_key(name: str) -> str:
     return normalize(name)
+
+
+# ===========================================================================
+# La cola: que se encadena detras de la sincronizacion
+# ===========================================================================
+# Vive aqui como datos y no como una lista de "if" porque la ventana necesita
+# exactamente lo mismo para pintar las casillas. Anadir un paso es anadir una
+# linea, y sale a la vez en el motor, en la tarea programada y en la interfaz.
+@dataclass(frozen=True)
+class Paso:
+    """Un trabajo que se puede encadenar detras de la sincronizacion."""
+    clave: str                              # el ajuste que lo enciende
+    nombre: str                             # como se llama, en todas partes
+    detalle: str                            # que hace, para la casilla
+    hacer: Callable[["SyncEngine"], str]    # devuelve su resumen, o ""
+    aviso: str = ""                         # lo que conviene saber antes
+
+
+def _paso_itunes(engine: "SyncEngine") -> str:
+    engine._sync_itunes()
+    return ""                   # ya cuenta lo suyo con su propio detalle
+
+
+def _paso_publicar(engine: "SyncEngine") -> str:
+    from .publish import publish_playlists
+    return publish_playlists(engine.cfg, engine.tokens, engine.log,
+                             engine.should_stop).summary()
+
+
+def _paso_flac(engine: "SyncEngine") -> str:
+    engine._convert_flac()
+    return ""
+
+
+def _paso_arreglar(engine: "SyncEngine") -> str:
+    from .normalize import downsample_library
+    return engine._pasada(downsample_library)
+
+
+def _paso_caratulas(engine: "SyncEngine") -> str:
+    from .artwork import check_artwork
+    return engine._pasada(check_artwork)
+
+
+def _paso_biblioteca(engine: "SyncEngine") -> str:
+    from .normalize import normalize_library
+    return engine._pasada(normalize_library)
+
+
+def _paso_artistas(engine: "SyncEngine") -> str:
+    from .itunes import complete_tags
+    return complete_tags(engine.cfg, engine.tidal, engine.log,
+                         engine.should_stop).summary()
+
+
+def _paso_isrc(engine: "SyncEngine") -> str:
+    from .itunes import complete_artists_by_isrc
+    return complete_artists_by_isrc(engine.cfg, engine._cliente_de_artistas(),
+                                    engine.log, engine.should_stop).summary()
+
+
+def _paso_releer(engine: "SyncEngine") -> str:
+    from .normalize import refresh_info
+    return engine._pasada(refresh_info)
+
+
+PASOS: list[Paso] = [
+    Paso("itunes_enabled", "Volcar las playlists de TIDAL en iTunes",
+         "Crea o actualiza en iTunes una lista por cada una de TIDAL, con lo "
+         "que ya tengas en la biblioteca.",
+         _paso_itunes),
+    Paso("publish_after_sync", "Publicar tus listas de iTunes",
+         "El camino contrario: sube a Spotify (y a TIDAL) las listas de iTunes "
+         "que tengas marcadas en su pestana.",
+         _paso_publicar),
+    Paso("flac_after_sync", "Convertir a ALAC lo que haya llegado",
+         "Pasa a ALAC los FLAC y WAV que hayan caido en la carpeta de "
+         "auto-anadir, para que iTunes pueda leerlos.",
+         _paso_flac),
+    Paso("fix_after_sync", "Revisar y arreglar los ficheros",
+         "Repasa la biblioteca buscando los que pasan del techo de calidad y "
+         "los que tienen saltos en la linea de tiempo, y los reescribe.",
+         _paso_arreglar,
+         aviso="Recorre la biblioteca entera, aunque no mide el volumen."),
+    Paso("artwork_after_sync", "Arreglar las caratulas",
+         "Pasa a JPEG las portadas que un .m4a no admite, copiando el audio "
+         "tal cual.",
+         _paso_caratulas,
+         aviso="Recorre la biblioteca entera."),
+    Paso("artists_after_sync", "Completar datos desde TIDAL",
+         "Rellena en iTunes lo que falte -artista, album, ano- buscando cada "
+         "cancion en TIDAL.",
+         _paso_artistas,
+         aviso="Gasta cuota de la API de TIDAL."),
+    Paso("isrc_after_sync", "Completar los artistas por ISRC",
+         "Las que figuran a nombre de uno solo y son de varios: los "
+         "interpretes salen del ISRC, que identifica esa grabacion exacta.",
+         _paso_isrc,
+         aviso="Gasta cuota de la API."),
+    Paso("library_after_sync", "Repasar toda la biblioteca (volumen)",
+         "Deja todas las canciones al mismo volumen y baja las que pasen del "
+         "techo de calidad.",
+         _paso_biblioteca,
+         aviso="LO MAS LENTO de todo: mide cancion por cancion. La primera "
+               "vez son horas; despues solo mira lo que haya cambiado."),
+    Paso("refresh_after_sync", "Releer los datos en iTunes",
+         "Obliga a iTunes a releer los kbps y la frecuencia de los ficheros "
+         "que se hayan reescrito. Va al final por eso.",
+         _paso_releer),
+]

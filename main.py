@@ -28,7 +28,7 @@ from stsync.normalize import normalize_library
 from stsync.oauth import OAuthError
 from stsync.paths import app_dir, log_file
 from stsync.store import StateStore, TokenStore
-from stsync.sync import SyncEngine
+from stsync.sync import PASOS, SyncEngine
 from stsync.updates import UpdateError, apply_release, check, current_version
 
 MAX_LOG_BYTES = 2 * 1024 * 1024
@@ -192,12 +192,6 @@ def show_status() -> int:
     print(f"Direccion        : {cfg.direction}")
     print(f"Favoritos        : {'si' if cfg.sync_favorites else 'no'}")
     print(f"Playlists        : {'si' if cfg.sync_playlists else 'no'}")
-    itunes = ("si, prefijo '%s'" % cfg.get("itunes_playlist_prefix", "")
-              if cfg.get("itunes_enabled") else "no")
-    print(f"iTunes           : {itunes}")
-    flac = ("si, al terminar la sincronizacion"
-            if cfg.get("flac_after_sync") else "solo a mano o programado")
-    print(f"FLAC a ALAC      : {flac}")
     print(f"Borrados         : {'se propagan' if cfg.propagate_deletions else 'no se propagan'}")
     print(f"Simulacion       : {'SI' if cfg.dry_run else 'no'}")
     print(f"Ultima sync      : {state.last_sync or 'nunca'}")
@@ -208,6 +202,15 @@ def show_status() -> int:
     flac_task = scheduler.FLAC
     print(f"Tarea de FLAC    : "
           f"{scheduler.task_info(flac_task) if scheduler.task_exists(flac_task) else 'no registrada'}")
+
+    # Lo que de verdad hace la tarea diaria, en su orden. Se lee de la misma
+    # lista que recorre el motor, asi que no puede quedarse desfasado.
+    print()
+    print("Cola de cada sincronizacion (y de la tarea de cada 24 h):")
+    print(f"  [{'x' if cfg.sync_favorites else ' '}] Favoritos entre Spotify y TIDAL")
+    print(f"  [{'x' if cfg.sync_playlists else ' '}] Playlists entre Spotify y TIDAL")
+    for paso in PASOS:
+        print(f"  [{'x' if cfg.get(paso.clave) else ' '}] {paso.nombre}")
     return 0
 
 

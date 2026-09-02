@@ -139,6 +139,39 @@ Los filtros `playlist_include` y `playlist_exclude` se editan en el `config.json
 El botón *Abrir carpeta de datos* lista los ficheros de la aplicación y deja verlos
 o sacar una copia sin salir de la ventana.
 
+### Qué se hace después de sincronizar
+
+Recuadro **Después de sincronizar**, en la pestaña *Sincronización*. Viene plegado
+y el título dice cuántos pasos hay puestos; se abre con el `+`.
+
+Primero van siempre los favoritos y las playlists entre Spotify y TIDAL. Detrás se
+encadena lo que marques, **en este orden**, que no es casual: primero lo que trae
+canciones nuevas, luego lo que las convierte, luego lo que las arregla y al final
+lo que le cuenta a iTunes que han cambiado.
+
+| # | Paso | Qué hace |
+|---|---|---|
+| 1 | **Volcar las playlists de TIDAL en iTunes** | Una lista de iTunes por cada una de TIDAL, con lo que ya tengas. |
+| 2 | **Publicar tus listas de iTunes** | El camino contrario: sube a Spotify (y a TIDAL) las que tengas marcadas. |
+| 3 | **Convertir a ALAC lo que haya llegado** | Los FLAC y WAV de la carpeta de auto-añadir. |
+| 4 | **Revisar y arreglar los ficheros** | Los que pasan del techo de calidad y los que tienen saltos en la línea de tiempo. Recorre la biblioteca. |
+| 5 | **Arreglar las carátulas** | Pasa a JPEG las portadas que un `.m4a` no admite. Recorre la biblioteca. |
+| 6 | **Completar datos desde TIDAL** | Rellena artista, álbum y año buscando cada canción en TIDAL. Gasta cuota. |
+| 7 | **Completar los artistas por ISRC** | Las que figuran a nombre de uno solo y son de varios. Gasta cuota. |
+| 8 | **Repasar toda la biblioteca (volumen)** | Deja todo al mismo volumen. **Lo más lento**: la primera vez son horas. |
+| 9 | **Releer los datos en iTunes** | Que iTunes se entere de lo que ha cambiado. Va el último por eso. |
+
+Todo empieza desmarcado: lo que toca ficheros no se enciende solo. **La tarea
+automática de cada 24 h ejecuta exactamente esta misma cola**, no hay una lista
+aparte que se pueda quedar desfasada — y `estado.bat` te la enseña marcada tal
+como está.
+
+Si un paso falla, los demás siguen y el fallo sale en el resumen: que iTunes esté
+cerrado no puede dejar los FLAC sin convertir.
+
+Los pasos 1, 2 y 3 salen también en su propia pestaña, con la misma casilla:
+marcarla en un sitio la marca en el otro.
+
 ---
 
 ## Volcar las playlists de TIDAL en iTunes
@@ -165,7 +198,7 @@ desaparecer sin avisar: las quitas tú cuando lo veas. En `config.json` esto es
 
 | Ajuste | Qué hace |
 |---|---|
-| **Volcar en iTunes al sincronizar** | Añade el volcado al final de cada sincronización, incluida la tarea programada de las 24 h. Si lo dejas desmarcado, solo se ejecuta cuando lo pides a mano. |
+| **Volcar en iTunes al sincronizar** | Lo mete en la cola de cada sincronización, incluida la tarea de las 24 h. Es el paso 1 de *Después de sincronizar*, y la casilla es la misma. Desmarcado, solo se ejecuta cuando lo pides a mano. |
 | **Nombre en iTunes** | Prefijo del nombre de la playlist. Por defecto `TIDAL - `, con el espacio final. |
 | **Qué playlists** | Pulsa *Cargar de TIDAL* y marca las que quieras mantener. O deja marcado *Todas*, que incluye también las que crees en TIDAL más adelante. |
 | **Quitar lo que ya no esté** | Convierte la playlist de iTunes en un espejo: lo que desaparece de TIDAL desaparece de iTunes. Desactivado por defecto (solo añade). |
@@ -319,7 +352,7 @@ la pestaña. Arriba te dice en verde o en rojo si está listo.
 | Ajuste | Qué hace |
 |---|---|
 | **Carpeta** | Dónde buscar y dónde dejar los ALAC. Por defecto `C:\Music\iTunes\iTunes Media\Añadir automáticamente a iTunes`. Busca en subcarpetas; los `.m4a` van siempre a la raíz. |
-| **Convertir al terminar la sincronización** | Igual que la opción de iTunes: se encadena como **último paso de la cola**, después del volcado de playlists, y entra en la tarea diaria de las 24 h sin registrar nada nuevo. |
+| **Convertir al terminar la sincronización** | Lo mete en la cola de cada sincronización, y en la tarea diaria de las 24 h, sin registrar nada nuevo. Es el paso 3 de *Después de sincronizar*, y la casilla es la misma. |
 | **Calidad CD** | Deja el ALAC en 16 bits y 44,1 kHz, los **1411 kbps** de un CD. Sin esto, un FLAC de 24 bits y 192 kHz sale a **9216 kbps** y ocupa unas seis veces más, porque ALAC no pierde información: se lleva la resolución del original tal cual. Activado por defecto. |
 | **Normalizar el volumen** | `loudnorm=I=-9:TP=-1.5:LRA=11`, lo mismo que hacía el `flac2alac.bat` de siempre. |
 | **Completar lo que falte** | Un FLAC sin etiquetas entra en iTunes como *Artista desconocido* y ya no hay quien lo empareje. Como esos ficheros suelen llamarse `Artista - Titulo.flac`, de ahí salen el artista, el título y el número de pista **que el fichero no traiga**. Lo que ya trae manda siempre. |
@@ -641,7 +674,7 @@ python main.py --flac2alac      convierte los FLAC de la carpeta de iTunes a ALA
 python main.py --buscar "hay que venir"   por que esa cancion no casa con iTunes
 python main.py --version        version instalada y si hay una mas nueva
 python main.py --actualizar     instala la ultima release de GitHub
-python main.py --status         estado de cuentas, ajustes y tarea programada
+python main.py --status         estado, tarea programada y la cola marcada
 python main.py --dry-run --sync simulación
 python main.py --schedule 03:00 registra la tarea diaria
 python main.py --unschedule     la elimina
