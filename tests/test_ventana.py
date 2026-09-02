@@ -81,6 +81,37 @@ try:
     assert app.log_text.winfo_height() > 300, \
         "con sitio de sobra el registro deberia seguir estirandose"
 
+    # --- 3b. abrir la cola no puede comerse el registro -------------------
+    # Son nueve pasos con su explicacion: creciendo hacia abajo dejaban el
+    # registro en 156 px de los 500 que tenia. Van en su propio recuadro con
+    # scroll, asi que abrirlos no le quita sitio a nada.
+    antes = app.log_text.winfo_height()
+    app._toggle_cola()
+    app.update()
+    despues = app.log_text.winfo_height()
+    alto_lista = app.cola_canvas.winfo_height()
+    hace_falta = app.cola_canvas.bbox("all")[3]
+    print(f"3b. registro con la cola cerrada {antes}, abierta {despues}; "
+          f"los pasos ocupan {hace_falta} en un hueco de {alto_lista}")
+    assert despues > 180, "abrir la cola ha dejado el registro sin sitio"
+    # Lo que de verdad importa: el hueco esta topado y no crece con los pasos,
+    # asi que un decimo paso manana no le quita ni un pixel al registro.
+    assert alto_lista <= 160, alto_lista
+    assert hace_falta > alto_lista, "sin esto no se estaria probando el scroll"
+    assert app.cola_canvas.yview() != (0.0, 1.0), \
+        "los nueve pasos tienen que poder desplazarse dentro de su recuadro"
+
+    # Y la rueda sobre los pasos mueve los pasos, no la pestana.
+    principal, _ = pestana(app.tab_main)
+    principal.yview_moveto(0.0)
+    app.cola_canvas.yview_moveto(0.0)
+    app.update()
+    rueda(app.cola_canvas)
+    print("    rueda sobre los pasos ->", app.cola_canvas.yview())
+    assert app.cola_canvas.yview()[0] > 0.0, "no se han movido los pasos"
+    app._toggle_cola()
+    app.update()
+
     # --- 4. la rueda mueve la pestana que hay debajo del raton ------------
     app.geometry("700x400")
     app.update()

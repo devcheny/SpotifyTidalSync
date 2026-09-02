@@ -142,7 +142,8 @@ o sacar una copia sin salir de la ventana.
 ### Qué se hace después de sincronizar
 
 Recuadro **Después de sincronizar**, en la pestaña *Sincronización*. Viene plegado
-y el título dice cuántos pasos hay puestos; se abre con el `+`.
+y el título dice cuántos pasos hay puestos; se abre con el `+`. La lista tiene su
+propio scroll y una altura fija, así que abrirla no deja el registro sin sitio.
 
 Primero van siempre los favoritos y las playlists entre Spotify y TIDAL. Detrás se
 encadena lo que marques, **en este orden**, que no es casual: primero lo que trae

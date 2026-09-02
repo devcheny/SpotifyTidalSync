@@ -165,6 +165,36 @@ class App(tk.Tk):
         self._scroll_canvas.append(canvas)
         return marco, dentro
 
+    def _caja_con_scroll(self, padre: ttk.Frame, alto: int
+                         ) -> tuple[ttk.Frame, tk.Canvas]:
+        """Un recuadro de alto fijo que se desplaza si su contenido no cabe.
+
+        Lo usan las listas largas que viven dentro de una pestana -las
+        playlists, los pasos de la cola-: sin esto crecen hacia abajo y
+        empujan fuera de la vista lo que va detras.
+
+        Devuelve (donde va el contenido, el canvas). El canvas se apunta en
+        _scroll_canvas para que la rueda mueva este y no la pestana entera.
+        """
+        caja = ttk.Frame(padre, style="Card.TFrame")
+        caja.pack(fill="both", expand=True)
+        canvas = tk.Canvas(caja, bg=CARD, highlightthickness=0, height=alto)
+        barra = ttk.Scrollbar(caja, command=canvas.yview)
+        canvas.configure(yscrollcommand=barra.set)
+        barra.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        dentro = ttk.Frame(canvas, style="Card.TFrame")
+        ventana = canvas.create_window((0, 0), window=dentro, anchor="nw")
+        dentro.bind("<Configure>",
+                    lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        # El contenido ocupa el ancho del recuadro: si no, los textos que se
+        # parten en varias lineas lo hacen por donde les parece.
+        canvas.bind("<Configure>",
+                    lambda e: canvas.itemconfigure(ventana, width=e.width))
+        self._scroll_canvas.append(canvas)
+        return dentro, canvas
+
     def _on_wheel(self, event: tk.Event) -> None:
         """Desplaza el recuadro que esta debajo del raton, no siempre el mismo.
 
@@ -305,18 +335,7 @@ class App(tk.Tk):
         ttk.Label(cabecera, text="publica", style="Muted.TLabel",
                   width=9).pack(side="left")
 
-        caja = ttk.Frame(picker, style="Card.TFrame")
-        caja.pack(fill="both", expand=True)
-        self.pub_canvas = tk.Canvas(caja, bg=CARD, highlightthickness=0, height=150)
-        scroll = ttk.Scrollbar(caja, command=self.pub_canvas.yview)
-        self.pub_canvas.configure(yscrollcommand=scroll.set)
-        scroll.pack(side="right", fill="y")
-        self.pub_canvas.pack(side="left", fill="both", expand=True)
-        self.pub_items = ttk.Frame(self.pub_canvas, style="Card.TFrame")
-        self.pub_canvas.create_window((0, 0), window=self.pub_items, anchor="nw")
-        self.pub_items.bind("<Configure>", lambda _e: self.pub_canvas.configure(
-            scrollregion=self.pub_canvas.bbox("all")))
-        self._scroll_canvas.append(self.pub_canvas)
+        self.pub_items, self.pub_canvas = self._caja_con_scroll(picker, 150)
 
         self.pub_selection: dict[str, tk.BooleanVar] = {}
         self.pub_import: dict[str, tk.BooleanVar] = {}
@@ -547,16 +566,17 @@ class App(tk.Tk):
 
         self.cola_detalle = ttk.Frame(caja, style="Card.TFrame")
         ttk.Label(self.cola_detalle,
-                  text="Primero van siempre los favoritos y las playlists entre "
-                       "Spotify y TIDAL, segun las casillas de arriba. Detras "
-                       "se encadena esto, en este orden, y lo mismo hace la "
-                       "tarea automatica de cada 24 h. Si un paso falla, los "
-                       "demas siguen.",
+                  text="Van en este orden, detras de los favoritos y las "
+                       "playlists. Lo mismo hace la tarea de cada 24 h, y si "
+                       "un paso falla los demas siguen.",
                   style="Muted.TLabel", wraplength=720,
-                  justify="left").pack(anchor="w", pady=(10, 10))
+                  justify="left").pack(anchor="w", pady=(8, 8))
 
+        # Los pasos, en su propio recuadro con scroll: son nueve con su
+        # explicacion y creciendo hacia abajo dejarian el registro sin sitio.
+        lista, self.cola_canvas = self._caja_con_scroll(self.cola_detalle, 150)
         for numero, paso in enumerate(PASOS, 1):
-            fila = ttk.Frame(self.cola_detalle, style="Card.TFrame")
+            fila = ttk.Frame(lista, style="Card.TFrame")
             fila.pack(fill="x", pady=(0, 6))
             var = self._casilla(paso.clave)
             var.trace_add("write", lambda *_: self._refresh_cola())
@@ -565,12 +585,12 @@ class App(tk.Tk):
             texto = paso.detalle
             if paso.aviso:
                 texto += f"  ({paso.aviso})"
-            tk.Label(fila, text=texto, bg=CARD, fg=MUTED, wraplength=690,
+            tk.Label(fila, text=texto, bg=CARD, fg=MUTED, wraplength=660,
                      justify="left", font=("Segoe UI", 8)).pack(anchor="w",
                                                                 padx=(22, 0))
 
         ttk.Button(self.cola_detalle, text="Guardar ajustes",
-                   command=self._save_settings).pack(anchor="w", pady=(4, 0))
+                   command=self._save_settings).pack(anchor="w", pady=(8, 0))
         self._refresh_cola()
 
     def _casilla(self, clave: str) -> tk.BooleanVar:
