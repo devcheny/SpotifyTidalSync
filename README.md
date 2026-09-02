@@ -116,7 +116,7 @@ alguna vez te deja fuera algo que sí tenías, súbelo o desmarca la casilla: la
 comprobación entera se puede apagar.
 
 Esto vale para los tres emparejamientos —Spotify ↔ TIDAL, TIDAL → iTunes y el de
-la pestaña Publicar—, y lo descartado aparece en el informe con el motivo
+la pestaña *Publicar*—, y lo descartado aparece en el informe con el motivo
 completo, del estilo `la tuya (Eagles - Hotel California) dura 6:31 y esta 7:12:
 parece otra version`.
 
@@ -143,7 +143,13 @@ o sacar una copia sin salir de la ventana.
 
 ## Volcar las playlists de TIDAL en iTunes
 
-Pestaña **iTunes**. Por cada playlist de TIDAL crea (o actualiza) una playlist en
+Pestaña **iTunes › Traer de TIDAL**. Todo lo que toca iTunes vive bajo la misma
+pestaña, con las suyas dentro: *Traer de TIDAL*, *Publicar*, *Convertir a ALAC*,
+*Repasar la biblioteca* y *Una sola canción*. Las tres primeras trabajan con
+playlists o con lo que entra nuevo; la cuarta recorre las 7000 y la última toca
+un fichero y nada más.
+
+Por cada playlist de TIDAL crea (o actualiza) una playlist en
 iTunes llamada `TIDAL - <nombre>` y le añade las canciones **que ya tienes en tu
 biblioteca local**. No descarga nada ni convierte streams en ficheros: lo que no
 tengas se queda fuera y se apunta en el informe.
@@ -259,7 +265,7 @@ canciones añadiría sin tocar iTunes.
 
 ## Publicar tus listas de iTunes (y traerlas de vuelta)
 
-Pestaña **Publicar**, que es el camino contrario al de arriba: parte de una lista
+Pestaña **iTunes › Publicar**, que es el camino contrario al de arriba: parte de una lista
 tuya de iTunes y crea la misma en Spotify con el nombre `iTunes - <nombre>`,
 buscando allí cada canción por título y artista.
 
@@ -297,7 +303,7 @@ en iTunes.
 
 ## Convertir a ALAC
 
-Pestaña **Convertir a ALAC**. iTunes no sabe leer FLAC: lo que dejas en la carpeta de
+Pestaña **iTunes › Convertir a ALAC**. iTunes no sabe leer FLAC: lo que dejas en la carpeta de
 auto-añadir acaba arrinconado en su subcarpeta `No añadido\<fecha>\`. Esto recorre
 esa carpeta entera y convierte a ALAC con **ffmpeg** todo lo que sea sin pérdida
 —FLAC, WAV, AIFF, APE, WavPack—, dejando el `.m4a` en la raíz, que es donde
@@ -335,7 +341,7 @@ Con *Modo simulación* te dice qué convertiría sin tocar nada.
 
 ### Repasar toda la biblioteca
 
-Botón **Repasar la biblioteca**, en esa misma pestaña. Es el trabajo que hacía
+Pestaña **iTunes › Repasar la biblioteca**, primer recuadro. Es el trabajo que hacía
 `NormalizeLibrary.ps1`, pero **sin duplicar la biblioteca en otra carpeta** y
 midiendo antes de tocar: cada canción se analiza y solo se reescribe si su
 volumen se sale del margen (−9,5 a −8,5 LUFS) o si está grabada por encima del
@@ -372,8 +378,8 @@ También `python main.py --biblioteca`.
 
 ### Arreglar carátulas y refrescar iTunes
 
-Dos botones para dos problemas que salen justo después de convertir, y que no
-son el mismo aunque lo parezcan.
+Dos recuadros más de *Repasar la biblioteca*, para dos problemas que salen justo
+después de convertir y que no son el mismo aunque lo parezcan.
 
 **Repasar carátulas.** Un FLAC suele traer la portada en **PNG**, y dentro de un
 `.m4a` eso está fuera de norma: MP4 espera JPEG. iTunes la enseña igual, pero
@@ -422,8 +428,8 @@ Con *Probar* te dice cuántos hay de cada clase sin tocar nada.
 
 ### Hasta qué calidad se graba
 
-En la pestaña *Convertir a ALAC*, y vale para el conversor y para las dos pasadas
-de la biblioteca. Es un **techo, no un objetivo**: lo que ya venga por debajo se
+En *iTunes › Convertir a ALAC*, y vale para el conversor y para las pasadas de
+*Repasar la biblioteca*. Es un **techo, no un objetivo**: lo que ya venga por debajo se
 queda como está, porque subirlo no añadiría nada que no estuviera ya y solo
 ocuparía más.
 
@@ -531,7 +537,7 @@ red:
 Solo suma: nunca quita ni sustituye, y no repite a quien ya estuviera escrito
 aunque sea de otra manera. El título se deja como está.
 
-**Después, por el ISRC.** Botón **Artistas por ISRC** en la pestaña iTunes.
+**Después, por el ISRC.** Botón **Artistas por ISRC** en *iTunes › Traer de TIDAL*.
 Recorre la biblioteca, y de las canciones que figuran a nombre de uno solo
 busca su ISRC en Spotify (o TIDAL) y les añade los demás intérpretes. Como el
 ISRC identifica **esa grabación exacta**, la lista es la del sello y no una
@@ -569,6 +575,9 @@ Se comprueban tres cosas, de la más grave a la menos:
 Si algo de eso falla, el fichero nuevo se tira, el viejo se queda donde estaba y
 la canción aparece en la lista de errores.
 
+Los dos botones siguientes están en **iTunes › Una sola canción**, aparte de las
+pasadas: no recorren nada, trabajan sobre el fichero que elijas.
+
 **Examinar un fichero.** Cuando un reproductor se cierra al abrir una canción y no
 dice por qué, la única vía es poner al lado una que sí funcione y ver en qué se
 diferencian. Este botón cuenta todo lo que se sabe de un fichero: contenedor,
@@ -588,7 +597,7 @@ trabajo, sobre **esa canción y ninguna más**. Qué hace depende de lo que le d
 | Le das | Hace |
 |---|---|
 | Un FLAC, WAV, AIFF, APE, WavPack | Lo **convierte a ALAC** al lado, como si estuviera en la carpeta de auto-añadir: normaliza el volumen, completa las etiquetas y aplica el techo de calidad. **El original se queda donde está**, aquí no se borra nada. |
-| Un `.m4a` | Lo **arregla**: baja la calidad si pasa del techo y pasa la portada a JPEG si hace falta. |
+| Un `.m4a` | Lo **arregla**: baja la calidad si pasa del techo, **reencuadra el audio** si su línea de tiempo tiene saltos y pasa la portada a JPEG si hace falta. Lo mismo que le haría la pasada completa, para poder verlo en una antes. |
 
 Enseña el antes, lo que le ha hecho y el después. Es la forma de probar en un
 fichero antes de soltar una pasada contra la biblioteca entera; con un `.m4a`,

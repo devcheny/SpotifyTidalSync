@@ -197,25 +197,48 @@ class App(tk.Tk):
         notebook = ttk.Notebook(self)
         notebook.pack(fill="both", expand=True, padx=18, pady=(4, 6))
         pagina_main, self.tab_main = self._scrollable(notebook)
-        pagina_itunes, self.tab_itunes = self._scrollable(notebook)
-        pagina_flac, self.tab_flac = self._scrollable(notebook)
         pagina_settings, self.tab_settings = self._scrollable(notebook)
-        # Las dos pestanas de iTunes solo estorban en un equipo sin iTunes, asi
-        # que solo se ensenan si esta instalado. Los controles se crean igual
-        # (el resto de la ventana cuenta con ellos), pero no se anaden.
-        pagina_publish, self.tab_publish = self._scrollable(notebook)
+
+        # Todo lo que toca iTunes cuelga de una sola pestana, con las suyas
+        # dentro. Antes eran tres arriba ("iTunes", "Publicar", "Convertir a
+        # ALAC") y la ultima cargaba con cuatro trabajos distintos: convertir,
+        # repasar las 7000 y las herramientas de una sola cancion. Cada cosa
+        # tiene ahora su sitio, y se ve de un vistazo cual mira toda la
+        # biblioteca y cual toca un fichero.
+        marco_itunes = ttk.Frame(notebook)
+        sub = ttk.Notebook(marco_itunes)
+        sub.pack(fill="both", expand=True, pady=(8, 0))
+        pagina_itunes, self.tab_itunes = self._scrollable(sub)
+        pagina_publish, self.tab_publish = self._scrollable(sub)
+        pagina_flac, self.tab_flac = self._scrollable(sub)
+        pagina_library, self.tab_library = self._scrollable(sub)
+        pagina_file, self.tab_file = self._scrollable(sub)
+        sub.add(pagina_itunes, text="Traer de TIDAL")
+        sub.add(pagina_publish, text="Publicar")
+        sub.add(pagina_flac, text="Convertir a ALAC")
+        sub.add(pagina_library, text="Repasar la biblioteca")
+        sub.add(pagina_file, text="Una sola cancion")
+
+        # En un equipo sin iTunes esa pestana solo estorba, asi que no se
+        # anade. Los controles se crean igual, que el resto de la ventana
+        # cuenta con ellos.
         self.itunes_ok = itunes_diagnose()[0]
+        # Guardados para poder anadir la pestana desde fuera: en el equipo de
+        # desarrollo no hay iTunes, y sin esto no habria manera de comprobar
+        # que las pestanas de dentro se desplazan bien.
+        self.notebook = notebook
+        self.itunes_page = marco_itunes
         notebook.add(pagina_main, text="Sincronizacion")
         if self.itunes_ok:
-            notebook.add(pagina_itunes, text="iTunes")
-            notebook.add(pagina_publish, text="Publicar")
-            notebook.add(pagina_flac, text="Convertir a ALAC")
+            notebook.add(marco_itunes, text="iTunes")
         notebook.add(pagina_settings, text="Ajustes")
 
         self._build_main_tab()
         self._build_itunes_tab()
         self._build_publish_tab()
         self._build_flac_tab()
+        self._build_library_tab()
+        self._build_file_tab()
         self._build_settings_tab()
 
     # -- pestana Publicar: de iTunes hacia fuera -----------------------------
@@ -224,7 +247,7 @@ class App(tk.Tk):
         intro.pack(fill="x")
         ttk.Label(intro, text="Publicar tus listas de iTunes",
                   style="Head.TLabel").pack(anchor="w")
-        ttk.Label(intro, text="Al reves que la pestana iTunes: coge tus listas "
+        ttk.Label(intro, text="Al reves que 'Traer de TIDAL': coge tus listas "
                               "locales y crea la misma en Spotify o en TIDAL, "
                               "buscando alli cada cancion. Tu eliges cuales se "
                               "llevan y cuales quedan publicas; por defecto "
@@ -817,9 +840,9 @@ class App(tk.Tk):
         ttk.Label(calidad, text="Hasta que calidad se graba",
                   style="Card.TLabel").pack(anchor="w")
         tk.Label(calidad, text="Es un techo, no un objetivo: lo que ya venga "
-                               "por debajo se queda como esta. Vale para el "
-                               "conversor y para las dos pasadas de la "
-                               "biblioteca.",
+                               "por debajo se queda como esta. Vale para lo "
+                               "que se convierte aqui y para las pasadas de "
+                               "'Repasar la biblioteca'.",
                  bg=CARD, fg=MUTED, wraplength=700,
                  justify="left").pack(anchor="w", pady=(2, 6))
         self.calidad_var = tk.StringVar(
@@ -860,21 +883,28 @@ class App(tk.Tk):
         ttk.Button(row, text="Guardar ajustes",
                    command=self._save_settings).pack(side="left", padx=(8, 0))
 
-        self._build_library_box()
         self._refresh_flac_status()
         self._refresh_flac_schedule()
 
     # -- repaso de la biblioteca (cosa de una vez) ----------------------------
-    def _build_library_box(self) -> None:
-        caja = ttk.Frame(self.tab_flac, style="Card.TFrame", padding=14)
+    def _build_library_tab(self) -> None:
+        """Las pasadas que recorren las 7000, cada una en su recuadro.
+
+        Aqui dentro no hay nada rapido: todo lo de esta pestana abre la
+        biblioteca entera. Lo de probar sobre una cancion esta en la de al
+        lado, que es por donde conviene empezar.
+        """
+        caja = ttk.Frame(self.tab_library, style="Card.TFrame", padding=14)
         caja.pack(fill="x")
         ttk.Label(caja, text="Repasar toda la biblioteca  (se hace una vez)",
                   style="Head.TLabel").pack(anchor="w")
         ttk.Label(caja, text="Mide cancion por cancion y arregla solo las que lo "
-                             "necesitan: las que se salen del volumen y, si arriba "
-                             "esta marcada la calidad CD, las que esten grabadas "
-                             "por encima. Lo que ya esta bien no se toca. Con una "
-                             "biblioteca grande tarda un buen rato.",
+                             "necesitan: las que se salen del volumen y las que "
+                             "pasan del techo de calidad que hayas puesto en "
+                             "'Convertir a ALAC'. Lo que ya esta bien no se toca. "
+                             "Con una biblioteca grande tarda un buen rato, "
+                             "porque medir el volumen obliga a decodificarlas "
+                             "todas.",
                   style="Muted.TLabel", wraplength=740,
                   justify="left").pack(anchor="w", pady=(2, 8))
 
@@ -910,25 +940,28 @@ class App(tk.Tk):
             command=lambda: self._start_library(simular=True))
         self.try_library_button.pack(side="left", padx=(8, 0))
 
+        self._build_fix_box()
         self._build_artwork_box()
+        self._build_refresh_box()
 
-    # -- caratulas y datos de iTunes -----------------------------------------
-    def _build_artwork_box(self) -> None:
-        caja = ttk.Frame(self.tab_flac, style="Card.TFrame", padding=14)
+    # -- ficheros que se quedaron mal ----------------------------------------
+    def _build_fix_box(self) -> None:
+        caja = ttk.Frame(self.tab_library, style="Card.TFrame", padding=14)
         caja.pack(fill="x", pady=(12, 0))
-        ttk.Label(caja, text="Arreglar caratulas y refrescar iTunes",
+        ttk.Label(caja, text="Revisar y arreglar los ficheros",
                   style="Head.TLabel").pack(anchor="w")
-        ttk.Label(caja, text="Un FLAC suele traer la portada en PNG, y dentro de "
-                             "un .m4a eso esta fuera de norma: iTunes la ensena "
-                             "igual, pero hay programas (rekordbox, por ejemplo) "
-                             "que se cierran sin decir nada al cargar la cancion. "
-                             "Esto la pasa a JPEG copiando el audio tal cual, sin "
-                             "recodificarlo: no se pierde ni un bit y va rapido.",
+        ttk.Label(caja, text="Busca dos cosas y las arregla volviendo a escribir "
+                             "la cancion: las que estan grabadas por encima del "
+                             "techo, y las que tienen saltos en la linea de "
+                             "tiempo. Lo segundo es lo que hace que rekordbox se "
+                             "cierre al analizar una cancion que en iTunes suena "
+                             "perfecta. Aqui no se mide el volumen, asi que va "
+                             "mucho mas rapido que el repaso de arriba.",
                   style="Muted.TLabel", wraplength=740,
                   justify="left").pack(anchor="w", pady=(2, 8))
 
         fila_cd = ttk.Frame(caja, style="Card.TFrame")
-        fila_cd.pack(anchor="w", pady=(0, 10))
+        fila_cd.pack(anchor="w")
         self.down_button = ttk.Button(fila_cd, text="Revisar y arreglar ficheros",
                                       style="Accent.TButton",
                                       command=self._start_downsample)
@@ -939,8 +972,23 @@ class App(tk.Tk):
         self.try_down_button.pack(side="left", padx=(8, 0))
         self.down_label = tk.Label(
             caja, text="", bg=CARD, fg=MUTED, wraplength=740, justify="left")
-        self.down_label.pack(anchor="w", pady=(0, 12))
+        self.down_label.pack(anchor="w", pady=(8, 0))
         self._refresh_calidad()
+
+    # -- caratulas ------------------------------------------------------------
+    def _build_artwork_box(self) -> None:
+        caja = ttk.Frame(self.tab_library, style="Card.TFrame", padding=14)
+        caja.pack(fill="x", pady=(12, 0))
+        ttk.Label(caja, text="Arreglar caratulas",
+                  style="Head.TLabel").pack(anchor="w")
+        ttk.Label(caja, text="Un FLAC suele traer la portada en PNG, y dentro de "
+                             "un .m4a eso esta fuera de norma: iTunes la ensena "
+                             "igual, pero hay programas (rekordbox, por ejemplo) "
+                             "que se cierran sin decir nada al cargar la cancion. "
+                             "Esto la pasa a JPEG copiando el audio tal cual, sin "
+                             "recodificarlo: no se pierde ni un bit y va rapido.",
+                  style="Muted.TLabel", wraplength=740,
+                  justify="left").pack(anchor="w", pady=(2, 8))
 
         quitar = tk.BooleanVar(value=bool(self.cfg.get("artwork_remove", False)))
         self.vars["artwork_remove"] = quitar
@@ -957,30 +1005,76 @@ class App(tk.Tk):
             fila, text="Probar", width=8,
             command=lambda: self._start_artwork(simular=True))
         self.try_art_button.pack(side="left", padx=(8, 0))
-        self.refresh_button = ttk.Button(fila, text="Releer datos en iTunes",
-                                         command=self._start_refresh)
-        self.refresh_button.pack(side="left", padx=(20, 0))
-        self.inspect_button = ttk.Button(fila, text="Examinar un fichero...",
-                                         command=self._start_inspect)
-        self.inspect_button.pack(side="left", padx=(8, 0))
-        self.fixone_button = ttk.Button(fila, text="Convertir/arreglar uno...",
-                                        command=self._start_fix_one)
-        self.fixone_button.pack(side="left", padx=(8, 0))
 
-        ttk.Label(caja, text="'Releer datos' es para cuando iTunes sigue diciendo "
-                             "9216 kbps de una cancion que ya esta en 1411: se "
-                             "queda con lo que anoto el dia que la importo, y "
-                             "esto le obliga a releer el fichero.",
+    # -- que iTunes se entere de lo que ha cambiado --------------------------
+    def _build_refresh_box(self) -> None:
+        caja = ttk.Frame(self.tab_library, style="Card.TFrame", padding=14)
+        caja.pack(fill="x", pady=(12, 0))
+        ttk.Label(caja, text="Releer los datos en iTunes",
+                  style="Head.TLabel").pack(anchor="w")
+        ttk.Label(caja, text="Para cuando iTunes sigue diciendo 9216 kbps de una "
+                             "cancion que ya esta en 1411: se queda con lo que "
+                             "anoto el dia que la importo, y esto le obliga a "
+                             "releer el fichero. Va al final de cualquiera de las "
+                             "pasadas de arriba.",
                   style="Muted.TLabel", wraplength=740,
-                  justify="left").pack(anchor="w", pady=(8, 0))
-        ttk.Label(caja, text="'Examinar un fichero' cuenta todo lo que se sabe de "
-                             "una cancion: contenedor, streams, etiquetas, si el "
-                             "indice va al principio, si el fichero llega entero "
-                             "y si el audio se decodifica sin errores. Cuando un "
-                             "reproductor se cierra sin decir por que, la via es "
-                             "examinar la que falla y una que funcione y comparar.",
+                  justify="left").pack(anchor="w", pady=(2, 8))
+        self.refresh_button = ttk.Button(caja, text="Releer datos en iTunes",
+                                         command=self._start_refresh)
+        self.refresh_button.pack(anchor="w")
+
+    # -- probar en una antes de soltarlo contra las 7000 ---------------------
+    def _build_file_tab(self) -> None:
+        """Las dos herramientas que trabajan sobre un solo fichero.
+
+        Tienen pestana propia porque son el paso previo a todo lo demas: antes
+        de dejar que una pasada reescriba la biblioteca entera, conviene verla
+        hacer su trabajo en una cancion y comprobar como queda.
+        """
+        intro = ttk.Frame(self.tab_file, style="Card.TFrame", padding=14)
+        intro.pack(fill="x")
+        ttk.Label(intro, text="Probar en una sola cancion",
+                  style="Head.TLabel").pack(anchor="w")
+        ttk.Label(intro, text="Nada de esto recorre la biblioteca: eliges el "
+                              "fichero y solo se toca ese. Es por donde empezar "
+                              "cuando una cancion da guerra, y tambien la forma "
+                              "de ver que hace una pasada antes de lanzarla "
+                              "contra todo.",
                   style="Muted.TLabel", wraplength=740,
-                  justify="left").pack(anchor="w", pady=(6, 0))
+                  justify="left").pack(anchor="w", pady=(2, 0))
+
+        caja = ttk.Frame(self.tab_file, style="Card.TFrame", padding=14)
+        caja.pack(fill="x", pady=(12, 0))
+        ttk.Label(caja, text="Examinar un fichero",
+                  style="Head.TLabel").pack(anchor="w")
+        ttk.Label(caja, text="Cuenta todo lo que se sabe de una cancion: "
+                             "contenedor, streams, etiquetas, si el indice va al "
+                             "principio, si el fichero llega entero, si tiene "
+                             "saltos en la linea de tiempo y si el audio se "
+                             "decodifica sin errores. Cuando un reproductor se "
+                             "cierra sin decir por que, la via es examinar la que "
+                             "falla y una que funcione y comparar. No toca nada.",
+                  style="Muted.TLabel", wraplength=740,
+                  justify="left").pack(anchor="w", pady=(2, 8))
+        self.inspect_button = ttk.Button(caja, text="Examinar un fichero...",
+                                         command=self._start_inspect)
+        self.inspect_button.pack(anchor="w")
+
+        caja = ttk.Frame(self.tab_file, style="Card.TFrame", padding=14)
+        caja.pack(fill="x", pady=(12, 0))
+        ttk.Label(caja, text="Convertir o arreglar una cancion",
+                  style="Head.TLabel").pack(anchor="w")
+        ttk.Label(caja, text="Le hace a ese fichero lo que le tocaria en una "
+                             "pasada, y ensena el antes y el despues. Si eliges "
+                             "un FLAC lo convierte a ALAC sin llevarse el "
+                             "original por delante; si eliges un .m4a le baja la "
+                             "calidad, le reencuadra el audio o le arregla la "
+                             "portada, segun lo que le falte.",
+                  style="Muted.TLabel", wraplength=740,
+                  justify="left").pack(anchor="w", pady=(2, 8))
+        self.fixone_button = ttk.Button(caja, text="Convertir/arreglar uno...",
+                                        command=self._start_fix_one)
+        self.fixone_button.pack(anchor="w")
 
     def _start_artwork(self, simular: bool = False) -> None:
         if self.worker and self.worker.is_alive():

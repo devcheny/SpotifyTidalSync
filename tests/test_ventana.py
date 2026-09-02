@@ -8,6 +8,7 @@ No toca la configuracion: solo la lee, como al abrir la aplicacion.
 """
 import sys
 from pathlib import Path
+from tkinter import ttk
 
 AQUI = Path(__file__).resolve().parent
 sys.path.insert(0, str(AQUI.parent))
@@ -18,10 +19,19 @@ app.wm_attributes("-alpha", 0.01)
 
 
 def pestana(tab):
-    """Ensena esa pestana y devuelve (su canvas, su barra)."""
+    """Ensena esa pestana y devuelve (su canvas, su barra).
+
+    Lo de iTunes son pestanas dentro de otra pestana, asi que hay que ensenar
+    tambien las de fuera: sin eso tkinter no mide lo que no esta a la vista.
+    """
     canvas = tab.master
     pagina = canvas.master
-    pagina.master.select(pagina)      # sin ensenarla, tkinter no la mide
+    hijo = pagina
+    while hijo is not None:
+        padre = getattr(hijo, "master", None)
+        if isinstance(padre, ttk.Notebook):
+            padre.select(hijo)
+        hijo = padre
     app.update()
     for hijo in pagina.winfo_children():
         if hijo.winfo_class() == "TScrollbar":
@@ -83,28 +93,58 @@ try:
 
     # --- 5. dentro de una lista larga, gana la lista ----------------------
     # Las playlists viven en un recuadro con scroll propio, dentro de una
-    # pestana que tambien lo tiene: la de dentro es la que debe moverse.
+    # pestana que a su vez esta dentro de la de iTunes: de los tres, el de
+    # dentro es el que debe moverse.
     if not app.itunes_ok:
-        # Sin iTunes esa pestana no se anade, asi que aqui no hay nada que
-        # mirar. Esta parte solo corre en el equipo donde se usa la app.
-        print("5. sin iTunes en este equipo: la pestana Publicar no esta")
-    else:
-        publicar, _ = pestana(app.tab_publish)
-        app._set_publish_lists([f"Lista {i:02d}" for i in range(30)])
-        app.update()
-        publicar.yview_moveto(0.0)
-        app.pub_canvas.yview_moveto(0.0)
-        app.update()
-        dentro = app.pub_canvas.winfo_rooty() - publicar.winfo_rooty() + 20
-        app._on_wheel(type("Ev", (), {
-            "x_root": app.pub_canvas.winfo_rootx() + 20,
-            "y_root": publicar.winfo_rooty() + dentro,
-            "delta": -120, "widget": app.pub_canvas})())
-        app.update()
-        print("5. rueda sobre la lista -> lista:", app.pub_canvas.yview(),
-              "| pestana:", publicar.yview())
-        assert app.pub_canvas.yview()[0] > 0.0, "la lista no se ha movido"
-        assert publicar.yview()[0] == 0.0, "se ha movido la pestana en su lugar"
+        # Sin iTunes no se anade, pero los controles si se crean: se anade
+        # aqui para poder medirla, que es lo unico que se esta probando.
+        app.notebook.insert(1, app.itunes_page, text="iTunes")
+        print("5. sin iTunes en este equipo: se anade la pestana para medirla")
+    publicar, _ = pestana(app.tab_publish)
+    app._set_publish_lists([f"Lista {i:02d}" for i in range(30)])
+    app.update()
+    publicar.yview_moveto(0.0)
+    app.pub_canvas.yview_moveto(0.0)
+    app.update()
+    dentro = app.pub_canvas.winfo_rooty() - publicar.winfo_rooty() + 20
+    app._on_wheel(type("Ev", (), {
+        "x_root": app.pub_canvas.winfo_rootx() + 20,
+        "y_root": publicar.winfo_rooty() + dentro,
+        "delta": -120, "widget": app.pub_canvas})())
+    app.update()
+    print("5. rueda sobre la lista -> lista:", app.pub_canvas.yview(),
+          "| pestana:", publicar.yview())
+    assert app.pub_canvas.yview()[0] > 0.0, "la lista no se ha movido"
+    assert publicar.yview()[0] == 0.0, "se ha movido la pestana en su lugar"
+
+    # --- 5b. lo de iTunes esta todo bajo la misma pestana ------------------
+    # Antes eran tres pestanas arriba y una de ellas cargaba con cuatro
+    # trabajos distintos. Lo que se comprueba aqui es el desglose: que cada
+    # cosa tenga su sitio y que ninguna se haya quedado sin construir.
+    dentro = app.tab_publish.master.master.master
+    nombres = [dentro.tab(i, "text") for i in dentro.tabs()]
+    print("5b. dentro de iTunes:", nombres)
+    assert nombres == ["Traer de TIDAL", "Publicar", "Convertir a ALAC",
+                       "Repasar la biblioteca", "Una sola cancion"], nombres
+    arriba = [app.notebook.tab(i, "text") for i in app.notebook.tabs()]
+    assert arriba == ["Sincronizacion", "iTunes", "Ajustes"], arriba
+
+    # Y que las nuevas se dibujan: si una se quedara vacia, no tendria barra
+    # ni alto, y esto lo cantaria.
+    for tab, nombre in ((app.tab_library, "Repasar la biblioteca"),
+                        (app.tab_file, "Una sola cancion")):
+        canvas, _ = pestana(tab)
+        print(f"    {nombre}: alto {tab.winfo_reqheight()}")
+        assert tab.winfo_reqheight() > 100, f"{nombre} ha salido vacia"
+
+    # Mover los botones de sitio no puede dejar ninguno fuera del bloqueo:
+    # mientras algo trabaja, no se puede lanzar otra cosa encima.
+    app._set_busy(True)
+    assert str(app.down_button.cget("state")) == "disabled"
+    assert str(app.fixone_button.cget("state")) == "disabled"
+    app._set_busy(False)
+    assert str(app.down_button.cget("state")) == "normal"
+    print("    y todos los botones se bloquean mientras algo trabaja")
 
     # --- 6. el visor deja copiar el informe entero de una vez -------------
     # Es como se pasa el resultado de "Examinar un fichero" a otro sitio.
