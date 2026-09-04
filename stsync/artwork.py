@@ -26,10 +26,9 @@ from .convert import (ART_JPEG, CONVERTIBLES, NO_WINDOW, OBJETIVOS_NOMBRE,
                       args_calidad, args_caratula, caratula_de,
                       comprobar_salida, completar_etiquetas, es_mp4,
                       find_ffmpeg, fotogramas_imposibles, informe_fichero,
-                      leer_audio, _buscar_ffprobe)
+                      leer_audio, taller, _buscar_ffprobe, _traer)
 from .itunes import recorrer_biblioteca
-from .normalize import (SIN_PERDIDA, _borrar, _fichero_de, _reescribir,
-                        _sustituir)
+from .normalize import SIN_PERDIDA, _fichero_de, _reescribir
 
 @dataclass
 class ArtStats:
@@ -265,40 +264,39 @@ def _reparar(ffmpeg: str, fichero: Path, arte: str, quitar: bool,
     El audio va con "-c:a copy", asi que sale identico al que habia: aqui no se
     normaliza, no se recodifica y no se pierde ni un bit.
     """
-    temporal = fichero.with_name(f".{fichero.stem}.caratula{fichero.suffix}")
-    orden = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-             "-i", str(fichero), "-map", "0:a:0", "-c:a", "copy"]
-    orden += ["-vn"] if quitar else args_caratula(arte)
-    orden += ["-movflags", "+faststart", "-map_metadata", "0", str(temporal)]
+    # En una carpeta temporal, no al lado del original: dentro de la
+    # biblioteca, iTunes abre lo que aparece y Qsync lo sincroniza.
+    with taller(fichero.name) as temporal:
+        orden = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                 "-i", str(fichero), "-map", "0:a:0", "-c:a", "copy"]
+        orden += ["-vn"] if quitar else args_caratula(arte)
+        orden += ["-movflags", "+faststart", "-map_metadata", "0", str(temporal)]
 
-    try:
-        hecho = subprocess.run(orden, capture_output=True, text=True,
-                               encoding="utf-8", errors="replace",
-                               timeout=TIMEOUT_S, creationflags=NO_WINDOW)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        _borrar(temporal)
-        return str(exc)
+        try:
+            hecho = subprocess.run(orden, capture_output=True, text=True,
+                                   encoding="utf-8", errors="replace",
+                                   timeout=TIMEOUT_S, creationflags=NO_WINDOW)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return str(exc)
 
-    if hecho.returncode != 0 or not temporal.is_file() or not temporal.stat().st_size:
-        lineas = (hecho.stderr or "").strip().splitlines()
-        _borrar(temporal)
-        return lineas[-1] if lineas else "ffmpeg fallo"
+        if (hecho.returncode != 0 or not temporal.is_file()
+                or not temporal.stat().st_size):
+            lineas = (hecho.stderr or "").strip().splitlines()
+            return lineas[-1] if lineas else "ffmpeg fallo"
 
-    # Lo mismo que en el repaso: no se machaca una cancion buena por un
-    # fichero que ha salido sin audio, aunque ffmpeg diga que todo fue bien.
-    malo = comprobar_salida(temporal, fichero)
-    if malo:
-        _borrar(temporal)
-        return malo
+        # Lo mismo que en el repaso: no se machaca una cancion buena por un
+        # fichero que ha salido sin audio, aunque ffmpeg diga que todo fue bien.
+        malo = comprobar_salida(temporal, fichero)
+        if malo:
+            return malo
 
-    # Del audio no se pierde nada, pero de las etiquetas si: ffmpeg no vuelve a
-    # escribir las que no son de su tabla. Se copian mientras el original sigue
-    # ahi, que despues ya no habria de donde.
-    for aviso in completar_etiquetas(ffmpeg, fichero, temporal):
-        (log or (lambda mensaje: None))(f"      {aviso}")
+        # Del audio no se pierde nada, pero de las etiquetas si: ffmpeg no
+        # vuelve a escribir las que no son de su tabla. Se copian mientras el
+        # original sigue ahi, que despues ya no habria de donde.
+        for aviso in completar_etiquetas(ffmpeg, fichero, temporal):
+            (log or (lambda mensaje: None))(f"      {aviso}")
 
-    fallo = _sustituir(temporal, fichero)
-    if fallo:
-        _borrar(temporal)
-        return f"no se pudo sustituir el fichero ({fallo})"
+        fallo = _traer(temporal, fichero)
+        if fallo:
+            return f"no se pudo sustituir el fichero ({fallo})"
     return ""

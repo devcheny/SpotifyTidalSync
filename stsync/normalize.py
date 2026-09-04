@@ -9,9 +9,7 @@ conversor de FLAC.
 """
 from __future__ import annotations
 
-import os
 import subprocess
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -22,7 +20,8 @@ from .convert import (CD_RATE, NO_WINDOW, OBJETIVOS_NOMBRE, POR_DEFECTO,
                       caratula_de, completar_etiquetas, comprobar_salida,
                       filtro_audio, find_ffmpeg,
                       fotogramas_imposibles, leer_audio, medir_volumen,
-                      nombre_libre, volumen_actual, _buscar_ffprobe, _rate_de)
+                      nombre_libre, taller, volumen_actual, _buscar_ffprobe,
+                      _rate_de, _traer)
 from .itunes import ITunesError, recorrer_biblioteca
 from .store import StateStore
 
@@ -39,12 +38,6 @@ CON_PERDIDA = {
     "aac": ["-c:a", "aac", "-b:a", "256k"],
     "wmav2": ["-c:a", "wmav2", "-b:a", "192k"],
 }
-
-# En Windows, sustituir un fichero recien escrito falla de vez en cuando
-# porque el antivirus o el indexador lo tienen abierto un momento.
-INTENTOS_SUSTITUIR = 5
-ESPERA_SUSTITUIR = 0.3
-
 
 @dataclass
 class LibraryStats:
@@ -513,10 +506,14 @@ def _convertir_a_alac(ffmpeg: str, fichero: Path, track: Any,
     que iTunes ha aceptado la ruta nueva.
     """
     nuevo = nombre_libre(fichero.with_suffix(".m4a"))
-    error = _convertir(ffmpeg, fichero, nuevo, ["-c:a", "alac"], medida,
-                       frecuencia, log=lambda m: log(f"      {m}"))
-    if error:
-        return error, fichero
+    with taller(nuevo.name) as temporal:
+        error = _convertir(ffmpeg, fichero, temporal, ["-c:a", "alac"], medida,
+                           frecuencia, log=lambda m: log(f"      {m}"))
+        if error:
+            return error, fichero
+        fallo = _traer(temporal, nuevo)
+        if fallo:
+            return f"no se pudo dejar el .m4a en su sitio ({fallo})", fichero
 
     try:
         track.Location = str(nuevo)
@@ -571,16 +568,17 @@ def _reescribir(ffmpeg: str, fichero: Path, codec_args: list[str],
     Asi una cancion que falle a medias no se queda destrozada: el fichero de
     siempre no se toca hasta que hay uno nuevo entero.
     """
-    temporal = fichero.with_name(f".{fichero.stem}.normalizando{fichero.suffix}")
-    error = _convertir(ffmpeg, fichero, temporal, codec_args, medida,
-                       frecuencia, normalizar, log)
-    if error:
-        return error
+    # Fuera de la biblioteca: un fichero a medias ahi dentro lo abre iTunes en
+    # cuanto aparece, y en el equipo de uso ademas lo sincroniza Qsync.
+    with taller(fichero.name) as temporal:
+        error = _convertir(ffmpeg, fichero, temporal, codec_args, medida,
+                           frecuencia, normalizar, log)
+        if error:
+            return error
 
-    fallo = _sustituir(temporal, fichero)
-    if fallo:
-        _borrar(temporal)
-        return f"no se pudo sustituir el fichero ({fallo})"
+        fallo = _traer(temporal, fichero)
+        if fallo:
+            return f"no se pudo sustituir el fichero ({fallo})"
     return ""
 
 
@@ -658,22 +656,3 @@ def _borrar(fichero: Path) -> None:
         fichero.unlink(missing_ok=True)
     except OSError:
         pass    # ya lo tiene otro; peor seria abortar el repaso entero
-
-
-def _sustituir(temporal: Path, fichero: Path) -> str:
-    """Cambia el fichero por el nuevo, con paciencia.
-
-    En Windows esto falla de vez en cuando aunque nadie lo este usando: el
-    antivirus o el indexador abren el fichero recien escrito un instante. Con
-    una biblioteca entera pasa a menudo, asi que se reintenta antes de darlo
-    por perdido. Si iTunes lo esta reproduciendo, no habra manera y se dira.
-    """
-    ultimo = ""
-    for intento in range(INTENTOS_SUSTITUIR):
-        try:
-            os.replace(temporal, fichero)
-            return ""
-        except OSError as exc:
-            ultimo = str(exc)
-            time.sleep(ESPERA_SUSTITUIR * (intento + 1))
-    return ultimo

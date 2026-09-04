@@ -253,6 +253,37 @@ assert "1 sin fichero local" in descarte, descarte
 assert "no-existe.m4a" in descarte, "hay que decir cual, no solo cuantas"
 assert any("no se han mirado" in l for l in lineas), lineas
 
+# --- 9d. el fichero a medias no se escribe dentro de la biblioteca ---------
+# Hubo que cerrar iTunes para poder convertir: abre lo que aparece en sus
+# carpetas, y un temporal al lado del original es justo eso. Ademas, en el
+# equipo de uso esa carpeta la sincroniza Qsync. Se trabaja fuera y solo entra
+# el fichero terminado.
+def donde_escribio():
+    """La ruta de salida del ultimo ffmpeg."""
+    return Path((AQUI / "ultimo-comando.txt").read_text(
+        encoding="utf-8").splitlines()[-1])
+
+
+montar()
+(BANCO / "hires-con-jpg.m4a").write_bytes(b"original hires")
+LibreriaFalsa.canciones = [Com(BANCO / "hires-con-jpg.m4a")]
+downsample_library(config(), lambda m: None)
+salida = donde_escribio()
+print("9d. el repaso escribe en:", salida.parent.name)
+assert BANCO not in salida.parents, f"ha escrito dentro de la biblioteca: {salida}"
+assert salida.name == "hires-con-jpg.m4a", salida
+assert (BANCO / "hires-con-jpg.m4a").read_bytes() != b"original hires", \
+    "y aun asi la cancion tiene que quedar arreglada en su sitio"
+
+# Lo mismo el arreglo de caratulas, que reescribe por su cuenta.
+montar()
+check_artwork(config(), lambda m: None)
+salida = donde_escribio()
+print("    y el de caratulas en:", salida.parent.name)
+assert BANCO not in salida.parents, f"ha escrito dentro de la biblioteca: {salida}"
+assert not list(BANCO.glob("*.tmp")), "ni un puente a medias"
+assert not list(BANCO.glob(".*")), "ni un oculto"
+
 # --- 10. en simulacion se cuentan y no se toca nada -------------------------
 montar()
 (BANCO / "hires-con-jpg.m4a").write_bytes(b"original hires")

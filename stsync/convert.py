@@ -17,7 +17,9 @@ la caratula si el fichero la trae.
 """
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
+import errno
 import json
 import os
 import re
@@ -27,7 +29,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from .config import Config
 
@@ -139,36 +141,53 @@ def es_mp4(ruta: Path) -> bool:
 
 
 def _traer(origen: Path, destino: Path) -> str:
-    """Deja el fichero terminado en su sitio. "" si va bien.
+    """Deja el fichero terminado en su sitio, y solo entonces. "" si va bien.
+
+    Es la unica forma de que algo entre en la biblioteca: se trabaja fuera
+    (ver taller) y lo que llega aqui ya esta acabado.
 
     En el mismo volumen es un cambio de nombre y es instantaneo, asi que iTunes
     lo ve entero o no lo ve. Si el taller cayo en otra unidad hay que copiar, y
     entonces se copia a un nombre que iTunes no mira y se renombra al final,
     para que tampoco vea nunca una copia a medias.
+
+    Se insiste, porque en Windows el ultimo paso falla un instante muy a
+    menudo: iTunes tiene abierto el fichero que se va a sustituir, y el
+    antivirus y el indexador abren lo recien escrito. Estar en otra unidad no
+    es de esos: se pasa a copiar sin perder el tiempo esperando.
     """
-    try:
-        os.replace(origen, destino)
+    _, fallo = _insistiendo(lambda: os.replace(origen, destino),
+                            salvo=_otra_unidad)
+    if not fallo:
         return ""
-    except OSError:
-        pass
+
     puente = destino.with_name(destino.name + EN_OBRAS)
     try:
         shutil.copy2(origen, puente)
-        os.replace(puente, destino)
     except OSError as exc:
         _quitar(puente)
         return str(exc)
+    _, fallo = _insistiendo(lambda: os.replace(puente, destino))
+    if fallo:
+        _quitar(puente)
+        return fallo
     _quitar(origen)
     return ""
 
 
-def _insistiendo(accion: Callable[[], Any]) -> tuple[Any, str]:
+def _insistiendo(accion: Callable[[], Any],
+                 salvo: Callable[[OSError], bool] | None = None
+                 ) -> tuple[Any, str]:
     """Repite una operacion sobre ficheros que Windows puede negar un rato.
 
     Devuelve (lo que saliera, motivo del ultimo fallo). Pasa constantemente:
     iTunes se queda el fichero mientras lo mira, y el antivirus y el indexador
     abren un instante todo lo recien escrito. A la primera falla y a la tercera
     no, asi que insistir un poco ahorra la mitad de los errores.
+
+    Con *salvo* se dice que fallos no son de esos: hay errores que no se
+    arreglan esperando, y repetirlos cinco veces con sus pausas, cancion a
+    cancion, convierte un repaso de la biblioteca en una tarde.
     """
     ultimo = ""
     for intento in range(INTENTOS_FICHERO):
@@ -176,8 +195,34 @@ def _insistiendo(accion: Callable[[], Any]) -> tuple[Any, str]:
             return accion(), ""
         except OSError as exc:
             ultimo = str(exc)
+            if salvo is not None and salvo(exc):
+                break
             time.sleep(ESPERA_FICHERO * (intento + 1))
     return None, ultimo
+
+
+def _otra_unidad(exc: OSError) -> bool:
+    """Si el fallo es "eso esta en otro disco", que no se cura esperando."""
+    return (getattr(exc, "winerror", None) == 17     # ERROR_NOT_SAME_DEVICE
+            or exc.errno == errno.EXDEV)
+
+
+@contextlib.contextmanager
+def taller(nombre: str) -> Iterator[Path]:
+    """Una carpeta temporal donde escribir un fichero antes de ponerlo en su sitio.
+
+    Nada a medias debe existir dentro de la biblioteca. Ahi lo abre iTunes en
+    cuanto aparece -por eso hubo que cerrarlo para poder convertir-, el
+    indexador lo mira, y en el equipo de uso esa carpeta la sincroniza Qsync,
+    que subiria al NAS cada temporal para borrarlo un segundo despues.
+
+    Se limpia sola, tambien si algo revienta por el camino.
+    """
+    carpeta = Path(tempfile.mkdtemp(prefix="stsync-"))
+    try:
+        yield carpeta / nombre
+    finally:
+        shutil.rmtree(carpeta, ignore_errors=True)
 
 
 def _quitar(ruta: Path) -> None:
@@ -378,7 +423,11 @@ class FlacConverter:
         return target
 
     def _taller(self) -> Path:
-        """Carpeta de trabajo, fuera de donde mira iTunes. Se crea una por pasada."""
+        """Carpeta de trabajo, fuera de donde mira iTunes. Se crea una por pasada.
+
+        Es lo mismo que hace `taller`, pero una sola vez para toda la tanda en
+        vez de una por cancion: aqui pueden ser cientos seguidas.
+        """
         if self._obrador is None:
             self._obrador = Path(tempfile.mkdtemp(prefix="stsync-alac-"))
         return self._obrador

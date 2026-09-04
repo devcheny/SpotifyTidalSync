@@ -519,6 +519,20 @@ Si la carpeta de trabajo cae en otra unidad hay que copiar en vez de renombrar;
 entonces se copia primero a `canción.m4a.tmp`, que iTunes no mira, y se renombra
 al final.
 
+**Esto vale para todo lo que reescribe un fichero**, no solo para el conversor:
+el repaso de la biblioteca, el arreglo de los saltos y el de las carátulas
+también trabajan en una carpeta temporal. Antes dejaban el suyo escondido al
+lado del original (`.canción.normalizando.m4a`), dentro de la carpeta de iTunes,
+y eso da dos problemas: iTunes abre lo que aparece en sus carpetas, y si esa
+carpeta la sincroniza algo —Qsync, OneDrive—, cada temporal se sube al servidor
+para borrarlo un segundo después.
+
+El último paso, meter el fichero terminado en su sitio, **se reintenta**: en
+Windows falla un instante muy a menudo porque iTunes tiene abierto el fichero
+que se va a sustituir, o porque el antivirus está mirando el recién escrito.
+Estar en otra unidad no es de esos fallos, así que ahí no se espera: se pasa a
+copiar directamente.
+
 ### Las etiquetas no se pierden en silencio
 
 `-map_metadata` copia al `.m4a` las etiquetas que ffmpeg sabe traducir a MP4 y
